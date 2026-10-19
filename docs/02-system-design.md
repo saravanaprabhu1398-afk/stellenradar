@@ -287,7 +287,7 @@ flowchart LR
 | Option | Pros | Cons |
 |---|---|---|
 | **A. Step Functions + dbt on GitHub Actions (chosen)** | No always-on compute; dbt runs where the code lives; OIDC, no keys | Two orchestrators to correlate |
-| B. MWAA (Airflow) | One orchestrator, familiar | Minimum ~$350/month – far over budget |
+| B. MWAA (Airflow) | One orchestrator, familiar | Well over $100/month even at the smallest size – far over budget |
 | C. dbt inside a Lambda/ECS task | One orchestrator | Packaging dbt for Lambda is fragile; ECS adds networking and cost |
 
 To avoid timing guesswork between the two, Step Functions ends by sending a GitHub `repository_dispatch` event (token from Secrets Manager). The dbt workflow starts immediately, and only invokes the digest when `dbt build` succeeds. A daily GitHub cron at 09:00 acts as a fallback that exits early if the run already happened.
@@ -377,15 +377,15 @@ These are design assumptions that must be checked early in Week 1. Each takes le
 | S3 – DMS without endpoints | Can DMS Serverless in private subnets read its source credentials and write to S3 with only the gateway endpoint? Does it bill only while replicating? | Fall back to a provisioned `dms.t3.micro` created and deleted by the pipeline |
 | S4 – Athena MERGE | Does Athena `MERGE INTO` on Iceberg handle the SCD2 pattern (close old row + insert new row) in one statement, or does it need two? | Two statements in one Step Functions step |
 
-## 11. ADRs to write next
+## 11. Architecture decision records
 
 | ADR | Title |
 |---|---|
-| ADR-001 | Apache Iceberg as table format |
-| ADR-002 | pgvector on RDS instead of OpenSearch Serverless |
-| ADR-003 | No NAT Gateway: split internet-facing and VPC-bound Lambdas |
-| ADR-004 | Step Functions for orchestration, dbt on GitHub Actions via `repository_dispatch` |
-| ADR-005 | Bedrock models and EU cross-region inference profile |
-| ADR-006 | DMS Serverless, started and stopped per run |
-| ADR-007 | RDS IAM authentication for VPC Lambdas |
-| ADR-008 | Single `dev` environment |
+| [ADR-001](decisions/ADR-001-iceberg-table-format.md) | Apache Iceberg as table format |
+| [ADR-002](decisions/ADR-002-pgvector-vector-store.md) | pgvector on RDS instead of OpenSearch Serverless |
+| [ADR-003](decisions/ADR-003-no-nat-gateway.md) | No NAT Gateway: split internet-facing and VPC-bound Lambdas |
+| [ADR-004](decisions/ADR-004-orchestration.md) | Step Functions for orchestration, dbt on GitHub Actions via `repository_dispatch` |
+| [ADR-005](decisions/ADR-005-bedrock-models.md) | Bedrock models and EU cross-region inference profile |
+| [ADR-006](decisions/ADR-006-dms-serverless-cdc.md) | DMS Serverless, started and stopped per run |
+| [ADR-007](decisions/ADR-007-rds-iam-auth.md) | RDS IAM authentication for VPC Lambdas |
+| [ADR-008](decisions/ADR-008-single-environment.md) | Single `dev` environment |
