@@ -2,7 +2,7 @@
 
 | Version | Date | Author | Status |
 |---|---|---|---|
-| 0.1 | 2026-10-20 | Prabhu Saravanan | Draft – in review |
+| 0.2 | 2026-10-20 | Prabhu Saravanan | Draft – in review (CDC per ADR-009; metrics trimmed for cost) |
 
 Related documents: [PRD](01-prd.md) · [System Design](02-system-design.md) · [ADRs](decisions/README.md) · Data model (`04-data-model.md`, planned) · Security (`05-security.md`, planned)
 
@@ -38,7 +38,7 @@ stellenradar/
 │   │   ├── catalog/               # Glue databases, Athena workgroup, Lake Formation
 │   │   ├── lambda_function/       # generic: function + role + log group + alarms
 │   │   ├── rds/                   # PostgreSQL, parameter group, subnet group
-│   │   ├── dms/                   # DMS Serverless replication config + endpoints
+│   │   ├── dms/                   # DMS subnet group, endpoints, IAM roles (instance is per run)
 │   │   ├── orchestration/         # Step Functions, EventBridge Scheduler
 │   │   ├── notifications/         # SES identity, SNS alert topic
 │   │   ├── monitoring/            # Budgets, CloudWatch alarms, dashboards
@@ -73,6 +73,7 @@ stellenradar/
 | Search terms | `src/ingest/search_terms.yaml` (in Git) | `["Data Engineer", "Dateningenieur", "Analytics Engineer", "ETL Entwickler", "Big Data Engineer"]` |
 | Model IDs | Terraform variables → Lambda environment | `EXTRACT_MODEL_ID`, `EMBED_MODEL_ID` |
 | Prompt version | Folder name under `prompts/` + env var `PROMPT_VERSION` | `v1` |
+| Enrichment cap | Env var `MAX_ENRICH_PER_RUN` – postings above the cap stay on the work list for the next run ([cost model §4.3](06-cost-model.md)) | `200` |
 | Bucket names, table names | Terraform outputs → Lambda environment | `DATA_BUCKET` |
 | Candidate preferences | dbt `vars` in `dbt_project.yml` | `target_seniority: [senior, lead]`, `my_german_level: basic` |
 | Email addresses | `dev.auto.tfvars` (git-ignored) → SES identity + env var | `DIGEST_TO` |
@@ -359,7 +360,7 @@ Hard filters and the final ranking happen in dbt (§4.8), where enrichment field
 
 **One-time bootstrap** (run once after the first `terraform apply`):
 - The operator invokes the function with `{"mode": "bootstrap"}` and the master password (read from Secrets Manager on the operator's machine) in the payload. The handler never logs the event. This is the only time a password is passed to application code – a documented trade-off to avoid a Secrets Manager endpoint (ADR-003).
-- Bootstrap SQL: `CREATE EXTENSION vector;` create roles `migrator` (owns schemas, `rds_iam`), `match_app` (`rds_iam`), `dms_user` (`rds_replication`, password = value from Secrets Manager); create schemas `tracker` and `vec`.
+- Bootstrap SQL: `CREATE EXTENSION vector;` create roles `migrator` (owns schemas, `rds_iam`), `match_app` (`rds_iam`), `dms_user` (`rds_replication`, password = value from Secrets Manager); create schemas `tracker` and `vec`; create the persistent logical replication slot: `SELECT pg_create_logical_replication_slot('stellenradar_dms', 'test_decoding');`
 
 **Normal mode** (every run, as a Step Functions step): connect as `migrator` with IAM auth, apply `src/db_migrate/migrations/NNN_*.sql` not yet recorded in `public.schema_migrations`, each in a transaction.
 
@@ -383,16 +384,16 @@ ALTER TABLE tracker.applications REPLICA IDENTITY FULL;  -- full before-images f
 
 Filling the tracker (PRD Q5): `make db-up`, then `make tracker-add` runs a small CLI that invokes the db-migrate Lambda in `{"mode": "tracker_upsert"}` with the record – no direct network path to the database is needed.
 
-### 4.7 CDC – DMS Serverless (`infra/modules/dms`)
+### 4.7 CDC – DMS instance per run (`infra/modules/dms`, [ADR-009](decisions/ADR-009-dms-instance-per-run.md))
 
 | Setting | Value |
 |---|---|
-| Source endpoint | PostgreSQL, user `dms_user`, SSL `require`, credentials via Secrets Manager ARN (⚠ **Spike S3**) |
+| Source endpoint (Terraform) | PostgreSQL, user `dms_user`, SSL `require`, credentials via Secrets Manager ARN, `slotName=stellenradar_dms` (⚠ **Spike S3**) |
 | Logical decoding | DMS default plugin (`test_decoding`); `pglogical` not required. Needs RDS parameter `rds.logical_replication = 1` |
-| Target endpoint | S3, `s3://<data-bucket>/cdc/`, `DataFormat=parquet`, `TimestampColumnName=commit_ts`, `IncludeOpForFullLoad=true`, `DatePartitionEnabled=true` (inserts, updates and deletes are all written, with the `Op` column = `I`/`U`/`D`) |
-| Replication type | `full-load-and-cdc`, table mapping `tracker.applications` only |
-| Capacity | Min 1 DCU, max 2 DCU |
-| Lifecycle | Started by Step Functions (`dms:StartReplication`, `start-replication` / `resume-processing`), stopped after the CDC merge |
+| Target endpoint (Terraform) | S3, `s3://<data-bucket>/cdc/`, `DataFormat=parquet`, `TimestampColumnName=commit_ts`, `IncludeOpForFullLoad=true`, `DatePartitionEnabled=true` (inserts, updates and deletes are all written, with the `Op` column = `I`/`U`/`D`) |
+| Replication instance (Step Functions) | `dms.t3.micro`, single-AZ, smallest allowed storage, replication subnet group in the private subnets, `sg-dms`; created each run, deleted after the merge |
+| Replication task (Step Functions) | First run: `full-load-and-cdc`. Later runs: `cdc` with `CdcStartPosition` = `RecoveryCheckpoint` read from `s3://…/cdc/_state/checkpoint.json`. Table mapping `tracker.applications` only |
+| Lifecycle | Create instance → wait `available` → create task → start → wait CDC latency ≈ 0 → stop → save checkpoint → delete task → delete instance |
 
 **Merge into `curated.applications`** (`07_merge_applications.sql`) – latest change per key wins; deletes become soft deletes so history is kept:
 
@@ -493,18 +494,18 @@ steps:
 | # | State | Type / integration | Notes |
 |---|---|---|---|
 | 1 | `InitRun` | Pass | Builds `run_id`, `run_date`, `ingested_at` from `$$.Execution` |
-| 2 | `StartInfraAndIngest` | Parallel | Branch A: `rds:startDBInstance` (ignore `InvalidDBInstanceState` if already running). Branch B: `Ingest` (Lambda) |
+| 2 | `StartInfraAndIngest` | Parallel | Branch A: `rds:startDBInstance` (ignore `InvalidDBInstanceState` if already running), then `dms:createReplicationInstance`. Branch B: `Ingest` (Lambda) |
 | 3 | `Curate` | Athena `.sync` × 3 | 02 runs only if `$.manifest.complete == true` (Choice) |
 | 4 | `SelectToEnrich` | Athena `.sync` | Result CSV location passed to the Map |
 | 5 | `Enrich` | Distributed Map → Lambda | Skipped by a Choice if the work list is empty |
 | 6 | `MergeEnrichment` | Athena `.sync` | |
 | 7 | `SelectToEmbed` → `Embed` → `LogEmbeddings` | Athena, Lambda, Athena | |
 | 8 | `WaitForRds` | Wait 30 s + `rds:describeDBInstances` loop | Timeout 20 min |
-| 9 | `StartDms` | `dms:startReplication` | Started here, after RDS is available |
+| 9 | `CreateDmsInstance` | `dms:createReplicationInstance` + describe loop | Started in branch A of step 2 so it is ready by now; waited for here |
 | 10 | `DbMigrate` → `UnloadCurrent` → `Match` → `LoadScores` | Lambda, Athena, Lambda, Athena | |
-| 11 | `WaitForCdc` | Wait + `dms:describeReplications` loop until CDC latency ≈ 0 | Timeout 25 min |
+| 11 | `RunCdcTask` | `dms:createReplicationTask`, `startReplicationTask`, describe loop until CDC latency ≈ 0, `stopReplicationTask`, save checkpoint (S3 `putObject` SDK integration) | Timeout 25 min |
 | 12 | `MergeApplications` | Athena `.sync` | |
-| 13 | `Cleanup` | `dms:stopReplication`, then `rds:stopDBInstance` | Skips RDS stop if tag `keep_running=true` (manual session) |
+| 13 | `Cleanup` | `dms:deleteReplicationTask`, `dms:deleteReplicationInstance`, then `rds:stopDBInstance` | Skips RDS stop if tag `keep_running=true` (manual session) |
 | 14 | `Maintenance` | Choice: Sunday → `OPTIMIZE` / `VACUUM` | |
 | 15 | `DispatchDbt` | Lambda | |
 | 16 | `PublishMetrics` | Lambda-free: `cloudwatch:putMetricData` SDK integration | `PipelineSucceeded = 1` |
@@ -515,7 +516,7 @@ steps:
 |---|---|
 | `Lambda.ServiceException`, `Lambda.TooManyRequestsException`, `Lambda.SdkClientException` | 3 attempts, 5 s, backoff × 2 |
 | `Athena.AmazonAthenaException`, `States.Timeout` on Athena tasks | 2 attempts, 30 s, backoff × 2 |
-| `States.ALL` (after retries) | `Catch` → `CleanupOnFailure` (stop DMS, stop RDS, `sns:publish` with run_id + failed state + error) → `Fail` |
+| `States.ALL` (after retries) | `Catch` → `CleanupOnFailure` (delete DMS task and instance if they exist, stop RDS, `sns:publish` with run_id + failed state + error) → `Fail` |
 
 Execution timeout: 2 hours. Execution history retained 90 days.
 
@@ -526,12 +527,12 @@ Execution timeout: 2 hours. Execution history retained 90 days.
 | Execution failed | EventBridge rule on Step Functions `FAILED`, `TIMED_OUT`, `ABORTED` | SNS email |
 | No success in 26 h | CloudWatch alarm on `Stellenradar/PipelineSucceeded` (sum < 1 over 26 h, missing data = breaching) | SNS email |
 | dbt failed | GitHub Actions failure notification | Email from GitHub |
-| Enrichment dead letters > 10% | Metric `EnrichDeadLettered` / `EnrichAttempted` | SNS email |
+| Enrichment dead letters > 10% | Metric `EnrichDeadLetterRate` | SNS email |
 | DMS slot lag | `OldestReplicationSlotLag` > 1 GB while running | SNS email |
 | Cost | AWS Budgets $10 / $25 / $50 (actual) + forecast > $30 | Email |
 | RDS left running | EventBridge Scheduler at 22:00 Europe/Berlin: `rds:stopDBInstance` (universal target) | – |
 
-**Per-run metrics** (EMF, dimension `component`): `PostingsListed`, `PostingsNew`, `PostingsChanged`, `PostingsClosed`, `EnrichAttempted`, `EnrichDeadLettered`, `BedrockInputTokens`, `BedrockOutputTokens`, `EmbeddingsCreated`, `MatchesScored`, `DigestSent`.
+**Per-run metrics.** Each CloudWatch custom metric costs about $0.30/month, so only five are published as metrics (no extra dimensions): `PipelineSucceeded`, `PostingsNew`, `EnrichDeadLetterRate`, `BedrockInputTokens`, `BedrockOutputTokens`. All other counts (listed, changed, closed, embedded, matched, digest sent) are written to the run manifest and structured logs, where they can be queried with Logs Insights at no standing cost.
 
 ---
 
@@ -584,7 +585,7 @@ All roles trust only their service principal (or GitHub OIDC); all resource ARNs
 | `db-migrate` | VPC ENI permissions; `rds-db:connect` as `migrator` |
 | `dispatch-dbt` | `secretsmanager:GetSecretValue` on the GitHub token secret only |
 | `digest` | Athena query on workgroup; LF `SELECT` on `marts.top_matches_daily`; `ses:SendEmail` from the verified identity; `s3:*Object` on `digest/sent/*` |
-| `sfn-daily` | `lambda:InvokeFunction` on project functions; Athena + Glue + LF data access for curate/merge; `rds:Start/Stop/DescribeDBInstances` on the instance; `dms:Start/Stop/DescribeReplications` on the config; `s3:GetObject` on the Athena results bucket (Map `ItemReader`); `sns:Publish`; `cloudwatch:PutMetricData` |
+| `sfn-daily` | `lambda:InvokeFunction` on project functions; Athena + Glue + LF data access for curate/merge; `rds:Start/Stop/DescribeDBInstances` on the instance; `dms:Create/Delete/Describe` on replication instances and tasks tagged `project=stellenradar`, `dms:Start/StopReplicationTask`, `iam:PassRole` for the DMS service roles; `s3:GetObject`/`PutObject` on `cdc/_state/*`; `s3:GetObject` on the Athena results bucket (Map `ItemReader`); `sns:Publish`; `cloudwatch:PutMetricData` |
 | `gha-terraform` | Trust: `repo:saravanaprabhu1398-afk/stellenradar:ref:refs/heads/main` (apply) and `:pull_request` (plan, read-only policy) |
 | `gha-dbt` | Trust: workflows running on `main` (covers `repository_dispatch` and `schedule`, which always run on the default branch); Athena, Glue, LF data access on `curated` (read, without `applications.notes`) and `marts` (write); `lambda:InvokeFunction` on digest |
 | `gha-dbt-ci` | Trust: `pull_request`; LF read on `curated` (without `notes`), create/write/drop only in `dev_ci_*` databases; no Lambda invoke |
@@ -613,7 +614,7 @@ Branch protection on `main`: PR required, CI green required, linear history.
 | LLM returns invalid JSON | `validate()` | Retry once, then dead letter; run continues if < 10% | Fix prompt (new version); dead letters re-enter the work list automatically |
 | Bedrock throttling | botocore adaptive retry, Step Functions retry | Slower run | Automatic |
 | RDS fails to start | `WaitForRds` timeout | Run fails after enrichment is saved | Re-run; work list resumes from table state |
-| DMS fails | `WaitForCdc` timeout | Run fails; RDS/DMS stopped by cleanup | Changes stay in the slot; next run catches up |
+| DMS fails | `RunCdcTask` timeout | Run fails; DMS instance deleted, RDS stopped by cleanup | Changes stay in the slot; next run resumes from the last checkpoint |
 | dbt test fails | GitHub Actions | No digest; GitHub email | Fix model, re-run workflow |
 | Digest already sent | `sent` marker | No duplicate | – |
 
@@ -646,6 +647,6 @@ Branch protection on `main`: PR required, CI green required, linear history.
 |---|---|---|
 | O1 | BA detail endpoint and response fields (Spike S1) – drives `raw.posting_details` schema and `v_details_today` | Week 1, day 1 |
 | O2 | Exact Bedrock model IDs (Spike S2) – fills `EXTRACT_MODEL_ID`, `EMBED_MODEL_ID` | Week 1 |
-| O3 | DMS Serverless credential access and stop-billing behaviour (Spike S3) | Week 1/2 |
+| O3 | CDC resume from checkpoint on a new task/instance, and DMS credential access without endpoints (Spike S3) | Week 2, day 1 |
 | O4 | Athena acceptance of the SCD2 statements (incl. `UPDATE … NOT IN (subquery)` on Iceberg) and reading the Athena result CSV with `ItemReader` (Spike S4) | Week 1 |
 | O5 | Labelling guide for the 50-posting evaluation set | Test plan |

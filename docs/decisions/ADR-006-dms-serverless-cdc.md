@@ -2,7 +2,9 @@
 
 | Status | Date | Deciders | Related |
 |---|---|---|---|
-| Proposed – pending spike S3 | 2026-10-19 | Prabhu Saravanan | PRD FR-11–13, NFR-03, SM-04 · HLD §6.4 · ADR-002, ADR-003 |
+| **Superseded by [ADR-009](ADR-009-dms-instance-per-run.md)** | 2026-10-19 | Prabhu Saravanan | PRD FR-11–13, NFR-03, SM-04 · HLD §6.4 · ADR-002, ADR-003 |
+
+> **Superseded (2026-10-20):** DMS Serverless keeps a stopped replication provisioned – and billing – for 48 hours, so a daily start/stop bills around the clock. See [ADR-009](ADR-009-dms-instance-per-run.md).
 
 ## Context
 

@@ -2,7 +2,7 @@
 
 | Version | Date | Author | Status |
 |---|---|---|---|
-| 0.1 | 2026-10-19 | Prabhu Saravanan | Draft – in review |
+| 0.2 | 2026-10-20 | Prabhu Saravanan | Draft – in review (CDC changed to ADR-009) |
 
 Related documents: [PRD](01-prd.md) · ADRs (`decisions/`, planned) · SDD (`03-sdd.md`, planned)
 
@@ -88,14 +88,14 @@ Step Functions runs steps 1–6 and then triggers step 7; step 7 triggers step 8
 | # | Component | AWS service | Responsibility | PRD |
 |---|---|---|---|---|
 | C1 | Scheduler | EventBridge Scheduler | Starts the daily state machine at 06:00 Europe/Berlin (timezone-aware, DST-safe) | FR-01 |
-| C2 | Orchestrator | Step Functions (Standard) | Runs all AWS steps in order, retries, catches failures, starts/stops RDS and DMS | FR-22, FR-24 |
+| C2 | Orchestrator | Step Functions (Standard) | Runs all AWS steps in order, retries, catches failures, starts/stops RDS, creates/deletes the DMS instance | FR-22, FR-24 |
 | C3 | Ingest | Lambda (Python, outside VPC) | Calls the BA API per search term, writes raw JSON + a run manifest to S3 | FR-01–03 |
 | C4 | Curate | Athena (via Step Functions SDK integration) | SCD2 `MERGE` from raw into `curated.postings`; writes the list of changed postings | FR-04, FR-05 |
 | C5 | Enrich | Lambda (outside VPC) in a Step Functions Map | Calls Bedrock for each changed posting, validates JSON, writes to staging | FR-06–09 |
 | C6 | Embed | Lambda (outside VPC) | Creates embeddings for changed postings and the CV, writes vectors to staging | FR-14 |
 | C7 | Match | Lambda **inside VPC** | Loads vectors into pgvector, computes similarity scores, writes scores to staging | FR-14–16 |
 | C8 | Tracker DB | RDS PostgreSQL (smallest class) + pgvector | Application tracker (CDC source) and vector store | FR-11, FR-14 |
-| C9 | CDC | DMS Serverless | Replicates tracker changes to S3 as Parquet | FR-12 |
+| C9 | CDC | DMS `dms.t3.micro`, created and deleted per run (ADR-009) | Replicates tracker changes to S3 as Parquet | FR-12 |
 | C10 | Transform | dbt-athena on GitHub Actions | Builds marts and runs data tests | FR-18–21 |
 | C11 | Digest | Lambda (outside VPC) + SES | Reads `marts.top_matches_daily`, sends the email | FR-17 |
 | C12 | Catalog and governance | Glue Data Catalog + Lake Formation | Table metadata; table- and column-level permissions | FR-23 |
@@ -123,7 +123,7 @@ sequenceDiagram
     SCH->>SFN: start (06:00 Europe/Berlin)
     par Warm up database
         SFN->>RDS: StartDBInstance
-        SFN->>DMS: StartReplication (CDC)
+        SFN->>DMS: CreateReplicationInstance (ephemeral)
     and Ingest
         SFN->>ING: invoke(run_id)
         ING->>ING: search per term, fetch details (≤1 req/s)
@@ -145,7 +145,7 @@ sequenceDiagram
     MAT-->>SFN: scores in staging/match_scores/
     SFN->>ATH: INSERT staging → curated.match_scores
     SFN->>ATH: MERGE CDC files → curated.applications
-    SFN->>DMS: StopReplication
+    SFN->>DMS: Stop task, save checkpoint, delete task + instance
     SFN->>RDS: StopDBInstance
     SFN->>GHA: repository_dispatch (via dispatch-dbt λ)
     GHA->>ATH: dbt build (marts + tests)
@@ -156,7 +156,7 @@ sequenceDiagram
 
 **Expected duration:** 20–40 minutes, dominated by RDS start-up (~5–10 min, overlapped with ingest) and the BA API throttle. The digest should arrive by about 07:00.
 
-**Failure path:** every Step Functions task has a `Retry` (exponential backoff) and a `Catch` that goes to a cleanup branch: stop DMS, stop RDS, publish to the SNS alert topic, then fail the execution. dbt failures are reported by GitHub Actions; no digest is sent when dbt fails, so I never receive stale or partial matches.
+**Failure path:** every Step Functions task has a `Retry` (exponential backoff) and a `Catch` that goes to a cleanup branch: delete the DMS task and instance, stop RDS, publish to the SNS alert topic, then fail the execution. dbt failures are reported by GitHub Actions; no digest is sent when dbt fails, so I never receive stale or partial matches.
 
 ## 5. Data architecture
 
@@ -263,7 +263,7 @@ flowchart LR
     end
     subgraph VPC["VPC 10.20.0.0/16 – 2 private subnets, no IGW route for compute, no NAT"]
         MAT["match λ (ENI)"]
-        DMS["DMS Serverless"]
+        DMS["DMS instance (per run)"]
         RDS[("RDS PostgreSQL<br/>not publicly accessible")]
         GW["S3 gateway endpoint"]
     end
@@ -279,7 +279,7 @@ flowchart LR
 ```
 
 - The `match` Lambda connects with **RDS IAM database authentication**. The token is signed locally with the Lambda's role, so it needs no network call to Secrets Manager and no interface endpoint.
-- DMS reads its source credentials when the endpoint is created/started; how it does so without an endpoint is confirmed in the SDD spike (see §10).
+- How DMS reads its source credentials without a Secrets Manager endpoint is confirmed in spike S3 (§10).
 - Two private subnets in two AZs are required by the RDS subnet group; RDS itself is single-AZ.
 
 ### 6.2 Orchestration: Step Functions for AWS, GitHub Actions for dbt
@@ -305,13 +305,13 @@ Using an EU inference profile means requests may be served from another **EU** r
 
 | Time (Europe/Berlin) | What runs |
 |---|---|
-| 06:00 | Pipeline starts, RDS and DMS start |
-| ~06:30 | Matching done, CDC merged, RDS and DMS stopped |
+| 06:00 | Pipeline starts, RDS starts, DMS instance created |
+| ~06:35 | Matching done, CDC merged, DMS instance deleted, RDS stopped |
 | ~06:45 | dbt build |
 | ~07:00 | Digest email |
 | On demand | I start RDS (`make db-up`) to update the tracker; an EventBridge schedule stops it at 22:00 if still running |
 
-Changes I make to the tracker while DMS is stopped stay in the PostgreSQL logical replication slot and are picked up the next morning – within one run window (SM-04).
+Changes I make to the tracker between runs stay in the persistent PostgreSQL logical replication slot and are picked up the next morning – within one run window (SM-04).
 
 ### 6.5 Other decisions
 
@@ -319,7 +319,7 @@ Changes I make to the tracker while DMS is stopped stay in the PostgreSQL logica
 |---|---|---|
 | Table format | Apache Iceberg | Native `MERGE` in Athena; supported by Glue and Lake Formation |
 | Vector store | pgvector on the RDS instance already needed for CDC | OpenSearch Serverless has a minimum hourly cost |
-| CDC service | DMS Serverless, started/stopped by the pipeline | Billed only while replicating; a provisioned instance bills 24/7. Cost verified in the cost model |
+| CDC service | Provisioned `dms.t3.micro` created and deleted by the pipeline ([ADR-009](decisions/ADR-009-dms-instance-per-run.md)) | DMS Serverless keeps billing 48 h after a stop and an always-on instance costs ~$15/month; ephemeral costs ~$1 |
 | Environments | One environment (`dev`) | Budget; Terraform modules allow a second env later |
 | Terraform state | S3 backend with native lockfile (`use_lockfile`) | No DynamoDB table needed |
 | Encryption | SSE-S3 on buckets, AWS-managed key on RDS | Customer-managed KMS keys cost $1/month each with no benefit at this scale |
@@ -347,7 +347,7 @@ Details go in `05-security.md`.
 | Backfill / replay | Curated tables can be rebuilt from raw by re-running the curate step for a date range |
 | Alerts | SNS email on: Step Functions execution failed; GitHub Actions dbt failure (GitHub notification); no successful run in 26 h (CloudWatch alarm on a custom metric); budget thresholds $10 / $25 / $50 |
 | Observability | Structured JSON logs with `run_id` in every component. Per-run counts (fetched, new, changed, closed, enriched, dead-lettered, matched) written to the manifest and as CloudWatch metrics |
-| Cost guardrails | Athena workgroup with a per-query scan limit; Step Functions Map concurrency limit; S3 lifecycle on staging and results; RDS/DMS stopped outside windows |
+| Cost guardrails | Athena workgroup with a per-query scan limit; Step Functions Map concurrency limit; S3 lifecycle on staging and results; RDS stopped and DMS instance deleted outside windows |
 
 ## 9. How the design meets the non-functional requirements
 
@@ -355,7 +355,7 @@ Details go in `05-security.md`.
 |---|---|
 | NFR-01 Freshness < 24 h | Daily 06:00 run; freshness alarm at 26 h |
 | NFR-02 Reliability ≥ 95% | Retries, catch-and-cleanup, idempotent steps, dead-letter for single postings |
-| NFR-03 Cost ≤ $30 | No NAT, no interface endpoints, no always-on compute, RDS/DMS stopped, changed-only enrichment, budget alerts |
+| NFR-03 Cost ≤ $30 | No NAT, no interface endpoints, no always-on compute, RDS stopped, DMS ephemeral, changed-only enrichment, budget alerts |
 | NFR-04 Region | All resources in eu-central-1; EU inference profile documented as an exception (ADR) |
 | NFR-05 IaC | All of the above in Terraform modules under `infra/` |
 | NFR-06/07 Security | Per-component roles, OIDC, Secrets Manager, private RDS, encrypted buckets |
@@ -374,7 +374,7 @@ These are design assumptions that must be checked early in Week 1. Each takes le
 |---|---|---|
 | S1 – BA API | Do the search and job-detail endpoints still return the full description text? What are the page size and rate limits? | Enrich from the fields available in search results; record in an ADR (PRD R1) |
 | S2 – Bedrock access | Which Claude and embedding model IDs are enabled in eu-central-1 or via the EU inference profile? | Pick the nearest available model; update §6.3 |
-| S3 – DMS without endpoints | Can DMS Serverless in private subnets read its source credentials and write to S3 with only the gateway endpoint? Does it bill only while replicating? | Fall back to a provisioned `dms.t3.micro` created and deleted by the pipeline |
+| S3 – DMS per run | Does a new task on a new instance resume CDC from the saved checkpoint and persistent slot? Can DMS in private subnets read its secret and write to S3 with only the gateway endpoint? | Always-on `dms.t3.micro` (~$15/month) with other costs cut – new ADR |
 | S4 – Athena MERGE | Does Athena `MERGE INTO` on Iceberg handle the SCD2 pattern (close old row + insert new row) in one statement, or does it need two? | Two statements in one Step Functions step |
 
 ## 11. Architecture decision records
@@ -386,6 +386,7 @@ These are design assumptions that must be checked early in Week 1. Each takes le
 | [ADR-003](decisions/ADR-003-no-nat-gateway.md) | No NAT Gateway: split internet-facing and VPC-bound Lambdas |
 | [ADR-004](decisions/ADR-004-orchestration.md) | Step Functions for orchestration, dbt on GitHub Actions via `repository_dispatch` |
 | [ADR-005](decisions/ADR-005-bedrock-models.md) | Bedrock models and EU cross-region inference profile |
-| [ADR-006](decisions/ADR-006-dms-serverless-cdc.md) | DMS Serverless, started and stopped per run |
+| [ADR-006](decisions/ADR-006-dms-serverless-cdc.md) | DMS Serverless, started and stopped per run – *superseded* |
+| [ADR-009](decisions/ADR-009-dms-instance-per-run.md) | Provisioned DMS instance created and deleted per run |
 | [ADR-007](decisions/ADR-007-rds-iam-auth.md) | RDS IAM authentication for VPC Lambdas |
 | [ADR-008](decisions/ADR-008-single-environment.md) | Single `dev` environment |
