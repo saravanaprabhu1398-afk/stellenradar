@@ -6,7 +6,7 @@
 
 Related documents: [PRD NFR-03](01-prd.md) · [System Design](02-system-design.md) · ADRs [003](decisions/ADR-003-no-nat-gateway.md), [005](decisions/ADR-005-bedrock-models.md), [009](decisions/ADR-009-dms-instance-per-run.md)
 
-**Target:** ≤ $30 per month (NFR-03). **Result of this model:** with **Amazon Nova Lite** for extraction (ADR-005, revised after spike S2), a steady-state month costs about **$10** and month 1 about **$13**, leaving large headroom. The largest remaining costs are fixed: RDS storage, CloudWatch and Secrets Manager. If the Week 2 evaluation forces Nova Pro, a normal month rises to about $18.
+**Target:** ≤ $30 per month (NFR-03). **Result of this model:** with **Amazon Nova Lite** for extraction (ADR-005, revised after spike S2), a steady-state month costs about **$10** and month 1 about **$12**, leaving large headroom. The largest remaining costs are fixed: RDS storage, CloudWatch and Secrets Manager. If the Week 2 evaluation forces Nova Pro, a normal month rises to about $18.
 
 ---
 
@@ -15,7 +15,7 @@ Related documents: [PRD NFR-03](01-prd.md) · [System Design](02-system-design.m
 | ID | Assumption | Value | Confidence |
 |---|---|---|---|
 | CA-1 | New or changed postings per day | **100** (range 50–300, PRD A2) | Low – measure in Week 1 |
-| CA-2 | Active postings at any time | 3,500 | Low – measure in Week 1 |
+| CA-2 | Active postings at any time | **1,000** | High – measured in [spike S1](spikes/S1-ba-api.md) |
 | CA-3 | Extraction tokens per posting | 2,500 input (≈ 900 prompt + schema, ≈ 1,600 ad text), 250 output | Medium – measure on the labelled set |
 | CA-4 | Extraction retry rate (invalid output) | 5% | Medium |
 | CA-5 | Embedding tokens per posting | 1,500 | Medium |
@@ -101,12 +101,12 @@ Prices are approximate US list prices and must be checked for the EU profile; th
 
 | Event | Calculation | Nova Lite | Nova Pro |
 |---|---|---|---|
-| Initial backfill of 3,500 active postings | 9.2M input + 0.92M output | ≈ 0.80 | ≈ 10.30 |
-| Prompt version change (re-enrich all current postings) | Same as backfill | ≈ 0.80 | ≈ 10.30 |
+| Initial backfill of 1,000 active postings | 2.6M input + 0.26M output | ≈ 0.25 | ≈ 2.95 |
+| Prompt version change (re-enrich all current postings) | Same as backfill | ≈ 0.25 | ≈ 2.95 |
 | Evaluation iterations | 50 postings × ~10 runs × 3 Nova models | ≈ 2.00 in total | (included) |
-| Embedding backfill | 3,500 × 1,500 tokens | ≈ 0.10 | ≈ 0.10 |
+| Embedding backfill | 1,000 × 1,500 tokens | ≈ 0.03 | ≈ 0.03 |
 
-**Month 1 estimate:** with Nova Lite, steady state ($10.05) + backfill + evaluation ≈ **$13**, well within the target. With Nova Pro it would be ≈ $30, right at the limit – in that case run the backfill with Bedrock **batch inference** (≈ 50% off, if supported for the model) or backfill only postings published in the last 30 days.
+**Month 1 estimate:** with Nova Lite, steady state ($10.05) + backfill + evaluation ≈ **$12**; with Nova Pro ≈ $23. Both are within the target now that spike S1 measured ~1,000 active postings instead of 3,500.
 
 ## 6. Costs deliberately avoided
 

@@ -2,7 +2,7 @@
 
 | Version | Date | Author | Status |
 |---|---|---|---|
-| 0.2 | 2026-10-20 | Prabhu Saravanan | Draft – in review (CDC per ADR-009; metrics trimmed for cost) |
+| 0.3 | 2026-10-21 | Prabhu Saravanan | Draft – in review (BA API v6 per spike S1; CDC per ADR-009; metrics trimmed for cost) |
 
 Related documents: [PRD](01-prd.md) · [System Design](02-system-design.md) · [ADRs](decisions/README.md) · Data model (`04-data-model.md`, planned) · Security (`05-security.md`, planned)
 
@@ -70,7 +70,7 @@ stellenradar/
 
 | Setting | Where it lives | Example |
 |---|---|---|
-| Search terms | `src/ingest/search_terms.yaml` (in Git) | `["Data Engineer", "Dateningenieur", "Analytics Engineer", "ETL Entwickler", "Big Data Engineer"]` |
+| Search terms | `src/ingest/search_terms.yaml` (in Git) | `["Data Engineer", "Analytics Engineer", "Big Data Engineer", "ETL Entwickler"]` (spike S1) |
 | Model IDs | Terraform variables → Lambda environment | `EXTRACT_MODEL_ID = eu.amazon.nova-lite-v1:0`, `EMBED_MODEL_ID = amazon.titan-embed-text-v2:0` |
 | Prompt version | Folder name under `prompts/` + env var `PROMPT_VERSION` | `v1` |
 | Enrichment cap | Env var `MAX_ENRICH_PER_RUN` – postings above the cap stay on the work list for the next run ([cost model §4.3](06-cost-model.md)) | `200` |
@@ -95,12 +95,12 @@ No secret is ever stored in a Lambda environment variable, Step Functions input 
 | Output | Raw files in S3 + manifest; returns manifest summary to Step Functions |
 | Requirements | FR-01, FR-02, FR-03, NFR-09 |
 
-**BA API** (community-documented, [bundesAPI/jobsuche-api](https://github.com/bundesAPI/jobsuche-api)):
+**BA API** (community-documented, [bundesAPI/jobsuche-api](https://github.com/bundesAPI/jobsuche-api); verified in [spike S1](spikes/S1-ba-api.md)):
 
 | Call | Endpoint | Notes |
 |---|---|---|
-| Search | `GET https://rest.arbeitsagentur.de/jobboerse/jobsuche-service/pc/v4/jobs?was=<term>&angebotsart=1&size=100&page=<n>` | Header `X-API-Key: jobboerse-jobsuche`. `angebotsart=1` = employment (not training) |
-| Detail | ⚠ **Spike S1** – endpoint and response shape to be confirmed | Must return the full description text |
+| Search | `GET https://rest.arbeitsagentur.de/jobboerse/jobsuche-service/pc/v6/jobs?was=<term>&angebotsart=1&size=100&page=<n>` | Header `X-API-Key: jobboerse-jobsuche`. `angebotsart=1` = employment. Postings in `ergebnisliste`, total in `maxErgebnisse`; key field `referenznummer`. (v4 search returns HTTP 403) |
+| Detail | `GET …/pc/v4/jobdetails/<base64(referenznummer)>` | Full ad text in `stellenangebotsBeschreibung` (2–5k characters in the spike) |
 
 **Logic**
 
@@ -109,11 +109,11 @@ load search_terms.yaml
 load previous list index  s3://…/raw/state/list_index.json.gz   # {refnr: list_hash}
 for term in search_terms:
     for page in 1..N until empty or page cap (50):
-        GET search page (throttle: ≥1.0 s between any two requests)
+        GET search page (throttle: ≥ 1.1 s between the *starts* of any two requests)
         write raw/postings/ingest_date=<run_date>/run_id=<run_id>/search_<term>_<page>.json.gz
-        for each result: list_hash = sha256(canonical JSON of list fields)
-collect today's refnr set (union across terms, dedup)
-to_fetch = refnrs that are new or whose list_hash changed, capped at MAX_DETAILS (default 600)
+        for each result: list_hash = sha256(canonical JSON of list fields, incl. aenderungsdatum)
+collect today's referenznummer set (union across terms, dedup)
+to_fetch = references that are new or whose list_hash changed, capped at MAX_DETAILS (default 500 ≈ 10 min)
 for refnr in to_fetch:
     GET detail (throttled), write raw/.../details_<batch>.json.gz (100 records per file)
 write new list index (only for refnrs fetched successfully, so skipped ones retry tomorrow)
@@ -127,9 +127,9 @@ write manifest raw/manifests/run_id=<run_id>.json
   "run_id": "2026-10-21T040000Z-a1b2",
   "run_date": "2026-10-21",
   "complete": true,
-  "terms": 5,
-  "search_pages": 63,
-  "postings_listed": 2140,
+  "terms": 4,
+  "search_pages": 14,
+  "postings_listed": 1020,
   "details_requested": 212,
   "details_fetched": 209,
   "details_failed": 3,
@@ -151,6 +151,10 @@ write manifest raw/manifests/run_id=<run_id>.json
 | > 50% of terms fail | Raise `IngestFailed` → Step Functions fails the run and alerts |
 
 User-Agent: `stellenradar/0.1 (+https://github.com/saravanaprabhu1398-afk/stellenradar)`.
+
+**Timing (from spike S1):** a call takes 0.8–1.1 s, so with the start-to-start throttle one request costs ≈ 1.1 s. A normal run (≈ 14 search pages + < 100 details) takes ~2 minutes; the initial backfill of ~1,000 details is spread over 2–3 runs by `MAX_DETAILS`.
+
+**Normalisation to pipeline names** happens in the staging view (§4.2), not in the Lambda – raw files keep the BA's German field names exactly as returned.
 
 ### 4.2 Curate – SCD2 in Athena (`sql/athena/curate/*.sql`)
 
@@ -179,6 +183,8 @@ CREATE TABLE curated.postings (
   description    string,
   salary_text    string,
   employment_type string,
+  homeoffice_possible boolean,
+  is_temp_agency boolean,
   published_at   date,
   source_url     string,
   content_hash   string,
@@ -213,7 +219,7 @@ WHERE is_current = true
 -- 03_insert_new_versions.sql : new postings and new versions of changed ones
 INSERT INTO curated.postings
 SELECT s.refnr, s.title, s.employer, s.location, s.description, s.salary_text,
-       s.employment_type, s.published_at, s.source_url, s.content_hash, s.raw_s3_key,
+       s.employment_type, s.homeoffice_possible, s.is_temp_agency, s.published_at, s.source_url, s.content_hash, s.raw_s3_key,
        TIMESTAMP '${ingested_at}' AS valid_from, CAST(NULL AS timestamp(6)) AS valid_to,
        true AS is_current, '${run_id}' AS run_id
 FROM staging.v_details_today s
@@ -236,7 +242,7 @@ WHERE p.is_current AND e.refnr IS NULL;
 
 This is a plain `SELECT`, not `UNLOAD`: Athena writes the result as **one** CSV file with a header row (`<QueryExecutionId>.csv` in the results bucket), which is exactly what the Distributed Map `ItemReader` needs. `UNLOAD` may split output into several header-less files. None of the selected columns can contain commas or quotes.
 
-Note: bumping `PROMPT_VERSION` puts **all** current postings back on the work list (2,000–5,000 Bedrock calls). That is intended – it is how a new prompt is evaluated on real data – but it must be budgeted in the cost model.
+Note: bumping `PROMPT_VERSION` puts **all** current postings back on the work list (~1,000 Bedrock calls, spike S1). That is intended – it is how a new prompt is evaluated on real data – but it must be budgeted in the cost model.
 
 A similar `05_unload_current.sql` writes the current `(refnr, content_hash)` list to `staging/current/run_id=…/` for the match step.
 
@@ -645,7 +651,7 @@ Branch protection on `main`: PR required, CI green required, linear history.
 
 | ID | Item | Resolve in |
 |---|---|---|
-| O1 | BA detail endpoint and response fields (Spike S1) – drives `raw.posting_details` schema and `v_details_today` | Week 1, day 1 |
+| O1 | ✅ Spike S1 done ([results](spikes/S1-ba-api.md)): search `/pc/v6/jobs`, detail `/pc/v4/jobdetails/{base64}`; field mapping in data model §3 | – |
 | O2 | ✅ Spike S2 done: `EMBED_MODEL_ID = amazon.titan-embed-text-v2:0`, `EXTRACT_MODEL_ID = eu.amazon.nova-lite-v1:0` (development default; final Nova model chosen in Week 2, [ADR-005](decisions/ADR-005-bedrock-models.md)). Confirm forced `toolChoice` works with the chosen Nova model | Week 2 |
 | O3 | CDC resume from checkpoint on a new task/instance, and DMS credential access without endpoints (Spike S3) | Week 2, day 1 |
 | O4 | Athena acceptance of the SCD2 statements (incl. `UPDATE … NOT IN (subquery)` on Iceberg) and reading the Athena result CSV with `ItemReader` (Spike S4) | Week 1 |

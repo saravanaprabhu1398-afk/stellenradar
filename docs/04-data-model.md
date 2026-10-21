@@ -64,17 +64,20 @@ External tables over gzip JSON, partition projection on `ingest_date` (date) and
 
 ### 3.1 `raw.search_results`
 
-One row per posting per search page per run. Field names follow the BA API (German) – ⚠ confirmed in spike S1.
+One row per posting per search page per run, from `ergebnisliste` of `/pc/v6/jobs`. Field names are the BA's, exactly as returned ([spike S1](spikes/S1-ba-api.md)). Only the columns the pipeline uses are listed; the raw JSON keeps all fields.
 
 | Column | Type | Class | Description |
 |---|---|---|---|
-| `refnr` | string | Public | BA reference number – the posting's natural key |
-| `titel` | string | Public | Ad title |
-| `beruf` | string | Public | Occupation classification |
-| `arbeitgeber` | string | Public | Employer name |
-| `arbeitsort` | struct<ort, plz, region, land, koordinaten> | Public | Work location |
-| `aktuelleveroeffentlichungsdatum` | string (date) | Public | Latest publication date |
-| `modifikationstimestamp` | string (timestamp) | Public | Last modification at source |
+| `referenznummer` | string | Public | BA reference number – the posting's natural key (`refnr` in pipeline tables) |
+| `stellenangebotsTitel` | string | Public | Ad title |
+| `firma` | string | Public | Employer name |
+| `stellenlokationen` | array<struct> | Public | Work location(s) |
+| `hauptberuf` | string | Public | Main occupation classification |
+| `aenderungsdatum` | string (timestamp) | Public | Last modification at source – part of the list hash |
+| `datumErsteVeroeffentlichung` | string (date) | Public | First publication date |
+| `verguetungsangabe` | string | Public | Structured pay information, if any |
+| `homeofficemoeglich` | boolean | Public | Home office possible |
+| `externeURL` | string | Public | Set when the ad is hosted on an external site |
 | `search_term` | string | Internal | Search term that returned this row (added by ingest) |
 | `list_hash` | string | Internal | SHA-256 of the canonical list fields (added by ingest) |
 | `ingest_date` | date (partition) | Internal | Business date of the run |
@@ -82,19 +85,21 @@ One row per posting per search page per run. Field names follow the BA API (Germ
 
 ### 3.2 `raw.posting_details`
 
-One row per fetched detail record. Schema depends on spike S1; the columns the pipeline relies on are:
+One row per fetched detail record from `/pc/v4/jobdetails/{base64(referenznummer)}`. Detail records contain all search fields plus the ones below. The staging view `staging.v_details_today` maps them to pipeline names:
 
-| Column | Type | Class | Description |
+| Raw column | → Pipeline column | Class | Description |
 |---|---|---|---|
-| `refnr` | string | Public | Natural key |
-| `title` | string | Public | Title |
-| `employer` | string | Public | Employer |
-| `location` | string | Public | Location as text |
-| `description` | string | **Personal** | Full ad text (may contain contact names) |
-| `salary_text` | string | Public | Salary text if present |
-| `employment_type` | string | Public | Full-time, part-time, … |
-| `published_at` | string (date) | Public | Publication date |
-| `source_url` | string | Public | Link to the ad on the BA portal |
+| `referenznummer` | `refnr` | Public | Natural key |
+| `stellenangebotsTitel` | `title` | Public | Title |
+| `firma` | `employer` | Public | Employer |
+| `stellenlokationen` (first entry, city + postcode) | `location` | Public | Location as text |
+| `stellenangebotsBeschreibung` | `description` | **Personal** | Full ad text (may contain contact names) |
+| `verguetungsangabe` | `salary_text` | Public | Pay information if present |
+| `arbeitszeitVollzeit` / `arbeitszeitTeilzeit*` | `employment_type` | Public | Derived: full-time / part-time |
+| `homeofficemoeglich` | `homeoffice_possible` | Public | Structured flag – cross-check for the LLM's `remote_policy` |
+| `datumErsteVeroeffentlichung` | `published_at` | Public | First publication date |
+| `istArbeitnehmerUeberlassung` | `is_temp_agency` | Public | Temporary employment agency posting |
+| (derived) | `source_url` | Public | `https://www.arbeitsagentur.de/jobsuche/jobdetail/<referenznummer>` |
 | `ingest_date`, `run_id` | partitions | Internal | As above |
 
 ### 3.3 Run manifests and state
@@ -120,6 +125,8 @@ One row per fetched detail record. Schema depends on spike S1; the columns the p
 | `description` | string | yes | **Personal** | Normalised ad text |
 | `salary_text` | string | yes | Public | |
 | `employment_type` | string | yes | Public | |
+| `homeoffice_possible` | boolean | yes | Public | BA structured flag |
+| `is_temp_agency` | boolean | yes | Public | Temporary employment agency posting |
 | `published_at` | date | yes | Public | |
 | `source_url` | string | yes | Public | |
 | `content_hash` | string | no | Internal | SHA-256 over business fields; defines a "version" |

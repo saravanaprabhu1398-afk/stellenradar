@@ -47,4 +47,4 @@ __pycache__/
 *.pyc
 .env
 dbt/target/
-dbt/logs/
+dbt/logs/spikes/**/out/
