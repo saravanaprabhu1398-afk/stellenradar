@@ -153,7 +153,7 @@ Priority: **M** = must have for v1, **S** = should have, **C** = could have.
 
 **Assumptions**
 - A1: The BA job search endpoints (documented by the community project [bundesAPI/jobsuche-api](https://github.com/bundesAPI/jobsuche-api)) stay available and roughly stable for the build period.
-- A2: Volume is small: a few thousand active data-engineering postings and roughly 50–300 new or changed per day. To be verified in Week 1.
+- A2: Volume is small: about 1,000 active data-engineering postings (measured in spike S1, 2026-10-21) and an estimated 30–100 new or changed per day (to be measured in the first week of runs).
 - A3: Most postings are in German. The LLM handles German input and returns English field values.
 - A4: Salary is missing from most postings. `null` is a valid, correct answer.
 - A5: One candidate (me) and one CV. Multi-user is out of scope.

@@ -235,7 +235,7 @@ erDiagram
 
 | Item | Estimate | Basis |
 |---|---|---|
-| Active postings matching the search terms | 2,000–5,000 | Assumption A2 – verify in Week 1 |
+| Active postings matching the search terms | ~1,000 | Measured in [spike S1](spikes/S1-ba-api.md) (1,081 before de-duplication across terms) |
 | New or changed per day | 50–300 | Assumption A2 |
 | Raw data per day | < 20 MB | ~5 KB per detail record |
 | Bedrock extraction calls per day | 50–300 | Changed postings only |
@@ -372,7 +372,7 @@ These are design assumptions that must be checked early in Week 1. Each takes le
 
 | Spike | Question | If it fails |
 |---|---|---|
-| S1 – BA API | Do the search and job-detail endpoints still return the full description text? What are the page size and rate limits? | Enrich from the fields available in search results; record in an ADR (PRD R1) |
+| S1 – BA API | Do the search and job-detail endpoints still return the full description text? What are the page size and rate limits? **Done 2026-10-21** ([results](spikes/S1-ba-api.md)): v6 search + v4 detail work, full text returned, ~1,000 postings | – |
 | S2 – Bedrock access | Which extraction and embedding model IDs are enabled in eu-central-1 or via the EU inference profile? **Done 2026-10-21:** Titan V2 and Nova Lite confirmed; Claude needs a Marketplace subscription (deferred) | – |
 | S3 – DMS per run | Does a new task on a new instance resume CDC from the saved checkpoint and persistent slot? Can DMS in private subnets read its secret and write to S3 with only the gateway endpoint? | Always-on `dms.t3.micro` (~$15/month) with other costs cut – new ADR |
 | S4 – Athena MERGE | Does Athena `MERGE INTO` on Iceberg handle the SCD2 pattern (close old row + insert new row) in one statement, or does it need two? | Two statements in one Step Functions step |
