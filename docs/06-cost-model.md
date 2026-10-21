@@ -2,11 +2,11 @@
 
 | Version | Date | Author | Status |
 |---|---|---|---|
-| 0.1 | 2026-10-20 | Prabhu Saravanan | Draft – estimates, to be replaced by actuals in `docs/costs.md` |
+| 0.2 | 2026-10-21 | Prabhu Saravanan | Draft – extraction model changed to Amazon Nova (ADR-005); estimates, to be replaced by actuals in `docs/costs.md` |
 
 Related documents: [PRD NFR-03](01-prd.md) · [System Design](02-system-design.md) · ADRs [003](decisions/ADR-003-no-nat-gateway.md), [005](decisions/ADR-005-bedrock-models.md), [009](decisions/ADR-009-dms-instance-per-run.md)
 
-**Target:** ≤ $30 per month (NFR-03). **Result of this model:** a steady-state month costs about **$22** with the proposed extraction model. The first month can exceed the target because of the one-time backfill, and the choice of extraction model is the single biggest lever.
+**Target:** ≤ $30 per month (NFR-03). **Result of this model:** with **Amazon Nova Lite** for extraction (ADR-005, revised after spike S2), a steady-state month costs about **$10** and month 1 about **$13**, leaving large headroom. The largest remaining costs are fixed: RDS storage, CloudWatch and Secrets Manager. If the Week 2 evaluation forces Nova Pro, a normal month rises to about $18.
 
 ---
 
@@ -30,7 +30,9 @@ Prices are list prices in USD for eu-central-1 where found. Items marked *est.* 
 
 | Service | Unit | Price | Source / confidence |
 |---|---|---|---|
-| Bedrock – Claude Haiku 4.5 (EU profile) | 1M input / output tokens | $1.10 / $5.50 | Secondary source; EU geo profile ≈ 10% above global ($1 / $5) – *est.* |
+| Bedrock – Amazon Nova Lite | 1M input / output tokens | ≈ $0.06 / $0.24 | US list price; EU profile may be somewhat higher – *est.* |
+| Bedrock – Amazon Nova Pro | 1M input / output tokens | ≈ $0.80 / $3.20 | US list price – *est.* |
+| Bedrock – Claude Haiku 4.5 (EU profile, deferred) | 1M input / output tokens | ≈ $1.10 / $5.50 | Secondary source – *est.*; for comparison only |
 | Bedrock – Titan Text Embeddings V2 | 1M tokens | $0.02 | AWS blog |
 | RDS PostgreSQL `db.t4g.micro` single-AZ | hour | ≈ $0.019 | Secondary source (~$14/month on-demand) – *est.* |
 | RDS gp3 storage | GB-month | ≈ $0.137 | *est.* |
@@ -48,7 +50,7 @@ Prices are list prices in USD for eu-central-1 where found. Items marked *est.* 
 
 | # | Service | Calculation | $ / month |
 |---|---|---|---|
-| 1 | Bedrock extraction | 3,000 postings × 1.05 retries → 7.9M input × $1.10 + 0.79M output × $5.50 | **13.00** |
+| 1 | Bedrock extraction (Nova Lite) | 3,000 postings × 1.05 retries → 7.9M input × $0.06 + 0.79M output × $0.24 | 0.70 |
 | 2 | Bedrock embeddings | 3,000 × 1,500 = 4.5M tokens × $0.02 | 0.10 |
 | 3 | RDS instance | 45 h × $0.019 | 0.90 |
 | 4 | RDS storage | 20 GB gp3 × $0.137 (billed even when stopped) | 2.75 |
@@ -60,34 +62,35 @@ Prices are list prices in USD for eu-central-1 where found. Items marked *est.* 
 | 10 | Lambda | ~30,000 GB-s + requests | 0.40 |
 | 11 | Step Functions | ~7,500 transitions | 0.20 |
 | 12 | SES, SNS, EventBridge Scheduler, Glue Catalog, Lake Formation, Budgets, VPC, S3 gateway endpoint | Within free allowances or no charge | 0.10 |
-| | **Total (base case)** | | **≈ 22.35** |
+| | **Total (base case)** | | **≈ 10.05** |
 
-Bedrock extraction is **58%** of the bill; RDS storage is the largest fixed cost.
+With Nova Lite, Bedrock is under 10% of the bill. The largest items are RDS storage (27%), CloudWatch (23%) and Secrets Manager (12%) – all fixed costs that do not grow with volume.
 
 ## 4. Sensitivity
 
-### 4.1 Volume (with Haiku 4.5)
+### 4.1 Volume
 
-| Postings / day | Bedrock extraction | Total |
-|---|---|---|
-| 50 | 6.50 | ≈ 15.85 |
-| **100 (base)** | **13.00** | **≈ 22.35** |
-| 200 | 26.00 | ≈ 35.35 ⚠ |
-| 300 | 39.00 | ≈ 48.35 ⚠ |
+| Postings / day | Extraction – Nova Lite | Total – Nova Lite | Extraction – Nova Pro | Total – Nova Pro |
+|---|---|---|---|---|
+| 50 | 0.35 | ≈ 9.70 | 4.40 | ≈ 13.75 |
+| **100 (base)** | **0.70** | **≈ 10.05** | **8.80** | **≈ 18.15** |
+| 200 | 1.40 | ≈ 10.75 | 17.60 | ≈ 26.95 |
+| 300 | 2.10 | ≈ 11.45 | 26.40 | ≈ 35.75 ⚠ |
 
-Above roughly 150 postings/day, Haiku 4.5 alone breaks the budget.
+With Nova Lite, volume barely matters. With Nova Pro, the budget breaks above roughly 230 postings/day, so the volume guard (§4.3) stays in place.
 
 ### 4.2 Extraction model (base volume)
 
 | Model | Approx. price per 1M in / out | Extraction $ / month | Total | Note |
 |---|---|---|---|---|
-| Claude Haiku 4.5 (EU profile) | $1.10 / $5.50 | 13.00 | ≈ 22.35 | Proposed in ADR-005 |
-| Claude 3 Haiku (if available in the region) | ≈ $0.25 / $1.25 | ≈ 3.00 | ≈ 12.35 | Older model; check availability and deprecation date |
-| Amazon Nova Lite | ≈ $0.06 / $0.24 | ≈ 0.70 | ≈ 10.05 | Cheapest; German extraction quality unproven |
+| **Amazon Nova Lite** | ≈ $0.06 / $0.24 | ≈ 0.70 | ≈ 10.05 | Development default (ADR-005) |
+| Amazon Nova 2 Lite | check pricing page | – | – | Week 2 candidate; price to be filled in |
+| Amazon Nova Pro | ≈ $0.80 / $3.20 | ≈ 8.80 | ≈ 18.15 | Week 2 candidate if Lite is not accurate enough |
+| Claude Haiku 4.5 (EU profile) | ≈ $1.10 / $5.50 | ≈ 13.00 | ≈ 22.35 | Deferred – needs Marketplace subscription |
 
-Prices for the alternatives are approximate and must be checked; the point is the order of magnitude.
+Prices are approximate US list prices and must be checked for the EU profile; the point is the order of magnitude.
 
-**Decision rule (feeds ADR-005):** in Week 2, run the labelled set through Haiku 4.5 **and** one cheaper model. Pick the cheapest model that reaches ≥ 90% accuracy. If only Haiku 4.5 reaches it, keep it and enable the volume guard below.
+**Decision rule (feeds ADR-005):** in Week 2, run the labelled set through Nova Lite, Nova 2 Lite and Nova Pro. Pick the cheapest model that passes the accuracy gate. If none does, revisit Claude Haiku 4.5.
 
 ### 4.3 Guards against volume spikes
 
@@ -96,19 +99,14 @@ Prices for the alternatives are approximate and must be checked; the point is th
 
 ## 5. One-time and occasional costs
 
-| Event | Calculation (Haiku 4.5) | On-demand | With Bedrock batch inference (≈ 50% off, if supported for the model) |
+| Event | Calculation | Nova Lite | Nova Pro |
 |---|---|---|---|
-| Initial backfill of 3,500 active postings | 9.2M input + 0.92M output | ≈ 15.20 | ≈ 7.60 |
-| Prompt version change (re-enrich all current postings) | Same as backfill | ≈ 15.20 | ≈ 7.60 |
-| Evaluation iterations | 50 postings × ~10 runs | ≈ 2.20 | – |
-| Embedding backfill | 3,500 × 1,500 tokens | ≈ 0.10 | – |
+| Initial backfill of 3,500 active postings | 9.2M input + 0.92M output | ≈ 0.80 | ≈ 10.30 |
+| Prompt version change (re-enrich all current postings) | Same as backfill | ≈ 0.80 | ≈ 10.30 |
+| Evaluation iterations | 50 postings × ~10 runs × 3 Nova models | ≈ 2.00 in total | (included) |
+| Embedding backfill | 3,500 × 1,500 tokens | ≈ 0.10 | ≈ 0.10 |
 
-**Month 1 estimate:** steady state ($22) + backfill + evaluation ≈ **$32–40**, which exceeds the target. Options, in order of preference:
-1. Run the backfill with **batch inference** (spike S2 confirms support) → ≈ $32.
-2. Backfill only postings published in the last 30 days.
-3. Choose a cheaper model if it passes the accuracy gate (§4.2) → month 1 well under $20.
-
-Prompt changes in production are batched (at most one re-enrichment per month) for the same reason.
+**Month 1 estimate:** with Nova Lite, steady state ($10.05) + backfill + evaluation ≈ **$13**, well within the target. With Nova Pro it would be ≈ $30, right at the limit – in that case run the backfill with Bedrock **batch inference** (≈ 50% off, if supported for the model) or backfill only postings published in the last 30 days.
 
 ## 6. Costs deliberately avoided
 

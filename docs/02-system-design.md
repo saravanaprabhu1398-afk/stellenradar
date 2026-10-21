@@ -296,7 +296,7 @@ To avoid timing guesswork between the two, Step Functions ends by sending a GitH
 
 | Use | Model (proposed) | Why |
 |---|---|---|
-| Field extraction | A small, low-cost Claude model (Haiku class) through the **EU cross-region inference profile** | Good structured-output quality on German text at low cost. The EU profile keeps processing inside EU regions |
+| Field extraction | An **Amazon Nova** model (Lite by default; Lite / 2 Lite / Pro compared in Week 2) through the **EU cross-region inference profile** | Very low cost, billed directly by AWS (no Marketplace subscription), confirmed working in spike S2. The EU profile keeps processing inside EU regions. Claude is the documented fallback ([ADR-005](decisions/ADR-005-bedrock-models.md)) |
 | Embeddings | Amazon Titan Text Embeddings V2 (1,024 dims) | Available in eu-central-1, multilingual – the CV is English, most ads are German |
 
 Using an EU inference profile means requests may be served from another **EU** region. This is a documented exception to NFR-04 and gets its own ADR. Exact model IDs are confirmed against the Bedrock console in Step 0 and pinned in configuration, never hard-coded.
@@ -373,7 +373,7 @@ These are design assumptions that must be checked early in Week 1. Each takes le
 | Spike | Question | If it fails |
 |---|---|---|
 | S1 – BA API | Do the search and job-detail endpoints still return the full description text? What are the page size and rate limits? | Enrich from the fields available in search results; record in an ADR (PRD R1) |
-| S2 – Bedrock access | Which Claude and embedding model IDs are enabled in eu-central-1 or via the EU inference profile? | Pick the nearest available model; update §6.3 |
+| S2 – Bedrock access | Which extraction and embedding model IDs are enabled in eu-central-1 or via the EU inference profile? **Done 2026-10-21:** Titan V2 and Nova Lite confirmed; Claude needs a Marketplace subscription (deferred) | – |
 | S3 – DMS per run | Does a new task on a new instance resume CDC from the saved checkpoint and persistent slot? Can DMS in private subnets read its secret and write to S3 with only the gateway endpoint? | Always-on `dms.t3.micro` (~$15/month) with other costs cut – new ADR |
 | S4 – Athena MERGE | Does Athena `MERGE INTO` on Iceberg handle the SCD2 pattern (close old row + insert new row) in one statement, or does it need two? | Two statements in one Step Functions step |
 
