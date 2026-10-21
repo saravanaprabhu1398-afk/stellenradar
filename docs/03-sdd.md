@@ -71,7 +71,7 @@ stellenradar/
 | Setting | Where it lives | Example |
 |---|---|---|
 | Search terms | `src/ingest/search_terms.yaml` (in Git) | `["Data Engineer", "Dateningenieur", "Analytics Engineer", "ETL Entwickler", "Big Data Engineer"]` |
-| Model IDs | Terraform variables → Lambda environment | `EXTRACT_MODEL_ID`, `EMBED_MODEL_ID` |
+| Model IDs | Terraform variables → Lambda environment | `EXTRACT_MODEL_ID = eu.amazon.nova-lite-v1:0`, `EMBED_MODEL_ID = amazon.titan-embed-text-v2:0` |
 | Prompt version | Folder name under `prompts/` + env var `PROMPT_VERSION` | `v1` |
 | Enrichment cap | Env var `MAX_ENRICH_PER_RUN` – postings above the cap stay on the work list for the next run ([cost model §4.3](06-cost-model.md)) | `200` |
 | Bucket names, table names | Terraform outputs → Lambda environment | `DATA_BUCKET` |
@@ -646,7 +646,7 @@ Branch protection on `main`: PR required, CI green required, linear history.
 | ID | Item | Resolve in |
 |---|---|---|
 | O1 | BA detail endpoint and response fields (Spike S1) – drives `raw.posting_details` schema and `v_details_today` | Week 1, day 1 |
-| O2 | Exact Bedrock model IDs (Spike S2) – fills `EXTRACT_MODEL_ID`, `EMBED_MODEL_ID` | Week 1 |
+| O2 | ✅ Spike S2 done: `EMBED_MODEL_ID = amazon.titan-embed-text-v2:0`, `EXTRACT_MODEL_ID = eu.amazon.nova-lite-v1:0` (development default; final Nova model chosen in Week 2, [ADR-005](decisions/ADR-005-bedrock-models.md)). Confirm forced `toolChoice` works with the chosen Nova model | Week 2 |
 | O3 | CDC resume from checkpoint on a new task/instance, and DMS credential access without endpoints (Spike S3) | Week 2, day 1 |
 | O4 | Athena acceptance of the SCD2 statements (incl. `UPDATE … NOT IN (subquery)` on Iceberg) and reading the Athena result CSV with `ItemReader` (Spike S4) | Week 1 |
 | O5 | Labelling guide for the 50-posting evaluation set | Test plan |
