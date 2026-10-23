@@ -47,4 +47,8 @@ __pycache__/
 *.pyc
 .env
 dbt/target/
-dbt/logs/spikes/**/out/
+dbt/logs/
+spikes/**/out/
+# Terraform backend config (contains the account-specific bucket name)
+backend.hcl
+*.tfplan

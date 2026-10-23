@@ -1,0 +1,128 @@
+name: terraform
+
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+      - ".github/workflows/terraform.yml"
+  push:
+    branches: [main]
+    paths:
+      - "infra/**"
+      - ".github/workflows/terraform.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TF_VERSION: "1.16.6"
+  AWS_REGION: eu-central-1
+  TF_DIR: infra/envs/dev
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }}
+
+jobs:
+  plan:
+    name: plan (dev)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: terraform-plan-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Format check
+        run: terraform fmt -check -recursive infra
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Init
+        working-directory: ${{ env.TF_DIR }}
+        run: >-
+          terraform init
+          -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+          -backend-config="key=envs/dev/terraform.tfstate"
+          -backend-config="region=${{ env.AWS_REGION }}"
+          -backend-config="encrypt=true"
+          -backend-config="use_lockfile=true"
+
+      - name: Validate
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform validate -no-color
+
+      - name: Plan
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          set -o pipefail
+          terraform plan -no-color -lock-timeout=5m -out=tfplan | tee plan.txt
+          {
+            echo "## Terraform plan (dev)"
+            echo '```'
+            tail -c 60000 plan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  apply:
+    name: apply (dev)
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    # Protected environment: requires approval, and only this environment may assume the apply role.
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: terraform-apply-dev
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_APPLY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Init
+        working-directory: ${{ env.TF_DIR }}
+        run: >-
+          terraform init
+          -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+          -backend-config="key=envs/dev/terraform.tfstate"
+          -backend-config="region=${{ env.AWS_REGION }}"
+          -backend-config="encrypt=true"
+          -backend-config="use_lockfile=true"
+
+      - name: Plan
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          set -o pipefail
+          terraform plan -no-color -lock-timeout=5m -out=tfplan | tee plan.txt
+          {
+            echo "## Terraform plan applied (dev)"
+            echo '```'
+            tail -c 60000 plan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Apply
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform apply -no-color -lock-timeout=5m tfplan
