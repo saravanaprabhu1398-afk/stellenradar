@@ -9,6 +9,8 @@ All AWS resources for Stellenradar, in `eu-central-1`. Design: [SDD §5](../docs
 | `bootstrap/` | Local (`terraform.tfstate`, git-ignored) | Terraform state bucket `stellenradar-tfstate-<account>` – applied once |
 | `envs/dev/` | S3 backend, `envs/dev/terraform.tfstate`, native lockfile | Wires the modules together for the `dev` environment |
 | `modules/monitoring/` | – | Monthly budget ($10/$25/$50 actual, $30 forecast) and the account's cost anomaly alerts |
+| `modules/storage/` | – | Buckets `stellenradar-dev-{data,config,athena-results}-<account>`: SSE-S3, public access blocked, TLS only; lifecycle: `staging/` 30 days, Athena results 7 days, old CV versions 90 days |
+| `modules/catalog/` | – | Glue databases `stellenradar_{raw,staging,curated,marts}` and Athena workgroup `stellenradar-dev` (engine v3, 1 GiB scan limit per query) |
 | `modules/github_oidc/` | – | GitHub Actions roles: `gha-terraform-plan` (pull requests, read-only) and `gha-terraform-apply` (protected `dev` environment only) |
 
 Pre-existing account resources: the cost anomaly monitor and subscription were **imported** and are managed here. The GitHub OIDC provider is **looked up, not managed**, because other workloads in the account may use it.

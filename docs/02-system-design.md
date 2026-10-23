@@ -173,7 +173,7 @@ sequenceDiagram
 S3 layout (one data bucket + one results bucket + one config bucket):
 
 ```
-s3://stellenradar-<account>-data/
+s3://stellenradar-dev-data-<account>/
   raw/postings/ingest_date=YYYY-MM-DD/run_id=<id>/search_*.json.gz
   raw/postings/ingest_date=YYYY-MM-DD/run_id=<id>/details_*.json.gz
   raw/manifests/run_id=<id>.json
@@ -181,9 +181,9 @@ s3://stellenradar-<account>-data/
   cdc/applications/...                  # DMS output
   curated/{postings,posting_enrichment,applications,match_scores}/   # Iceberg
   marts/{skill_demand_weekly,market_overview,top_matches_daily,...}/ # Iceberg
-s3://stellenradar-<account>-config/
+s3://stellenradar-dev-config-<account>/
   cv/cv.md                              # personal – restricted
-s3://stellenradar-<account>-athena-results/
+s3://stellenradar-dev-athena-results-<account>/
 ```
 
 ### 5.2 Core entities

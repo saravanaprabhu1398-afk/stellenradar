@@ -20,6 +20,7 @@ This document is the data dictionary: every table, every column, who writes it, 
 | Enums | Lower-case English strings, validated by schema and dbt `accepted_values` |
 | Nulls | `null` means "not stated / unknown", never "zero" or "false by default" |
 | Formats | Raw: gzip JSON. Staging: JSONL / Parquet / CSV. Curated and marts: Apache Iceberg v2, Parquet, zstd |
+| Glue database names | This document uses the short layer names (`raw`, `staging`, `curated`, `marts`). In AWS they are prefixed to avoid clashes with other workloads in the account: `stellenradar_raw`, `stellenradar_staging`, `stellenradar_curated`, `stellenradar_marts`. SQL and dbt take the prefix from configuration |
 
 ### Data classification
 
