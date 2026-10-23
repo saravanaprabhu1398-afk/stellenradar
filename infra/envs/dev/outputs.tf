@@ -20,3 +20,7 @@ output "glue_databases" {
 output "athena_workgroup" {
   value = module.catalog.athena_workgroup
 }
+
+output "ingest_function_name" {
+  value = module.ingest.function_name
+}

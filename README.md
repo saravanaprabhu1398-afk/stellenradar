@@ -188,23 +188,23 @@ Job data comes from the job search endpoints of the Bundesagentur für Arbeit (G
 
 ---
 
-## Repository structure (planned)
+## Repository structure
 
 ```
 stellenradar/
-├── infra/                  # Terraform
-│   ├── modules/
-│   └── envs/dev/
-├── ingest/                 # Lambda: job search API → S3
-├── enrich/                 # Step Functions definition + Bedrock prompts
-│   └── prompts/
-├── cdc/                    # Tracker schema + DMS task config
-├── matching/               # Embeddings, pgvector, ranking
-├── dbt/                    # dbt-athena project
-├── eval/                   # Labelled set + scoring script
-├── docs/                   # Architecture, costs, evaluation, decisions
-└── .github/workflows/      # CI + scheduled dbt runs
+├── infra/                  # Terraform: bootstrap/, modules/, envs/dev/ (see infra/README.md)
+├── src/                    # Lambda code, one package per function
+│   ├── common/             # shared logging and S3 helpers
+│   └── ingest/             # BA job search → raw S3
+├── tests/unit/             # pytest, no network or AWS needed
+├── dbt/                    # dbt-athena project (Week 3)
+├── eval/                   # Labelled set + scoring script (Week 2)
+├── spikes/                 # Throw-away investigation scripts (raw output git-ignored)
+├── docs/                   # PRD, design, ADRs, spikes, costs, evaluation
+└── .github/workflows/      # ci.yml (lint + tests), terraform.yml (plan on PR, apply on main)
 ```
+
+Further packages (`enrich`, `embed`, `match`, …) are added under `src/` as they are built – see [SDD §2](docs/03-sdd.md).
 
 ---
 
