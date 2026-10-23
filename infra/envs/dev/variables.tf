@@ -17,3 +17,7 @@ variable "monthly_budget_usd" {
   type    = number
   default = 30
 }
+variable "github_repo" {
+  type    = string
+  default = "saravanaprabhu1398-afk/stellenradar"
+}
