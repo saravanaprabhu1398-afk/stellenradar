@@ -1,5 +1,8 @@
 locals {
   oidc_host         = "token.actions.githubusercontent.com"
+  repo_owner        = split("/", var.github_repo)[0]
+  repo_name         = split("/", var.github_repo)[1]
+  subject_prefix    = "repo:${local.repo_owner}@${var.github_owner_id}/${local.repo_name}@${var.github_repo_id}"
   oidc_provider_arn = var.create_oidc_provider ? aws_iam_openid_connect_provider.github[0].arn : data.aws_iam_openid_connect_provider.github[0].arn
 }
 
@@ -31,7 +34,7 @@ data "aws_iam_policy_document" "plan_trust" {
     condition {
       test     = "StringEquals"
       variable = "${local.oidc_host}:sub"
-      values   = ["repo:${var.github_repo}:pull_request"]
+      values   = ["${local.subject_prefix}:pull_request"]
     }
   }
 }
@@ -93,7 +96,7 @@ data "aws_iam_policy_document" "apply_trust" {
     condition {
       test     = "StringEquals"
       variable = "${local.oidc_host}:sub"
-      values   = ["repo:${var.github_repo}:environment:${var.github_environment}"]
+      values   = ["${local.subject_prefix}:environment:${var.github_environment}"]
     }
   }
 }

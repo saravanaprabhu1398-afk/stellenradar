@@ -21,3 +21,13 @@ variable "github_repo" {
   type    = string
   default = "saravanaprabhu1398-afk/stellenradar"
 }
+
+variable "github_owner_id" {
+  type    = number
+  default = 264806652
+}
+
+variable "github_repo_id" {
+  type    = number
+  default = 1287846975
+}

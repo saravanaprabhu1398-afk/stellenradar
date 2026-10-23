@@ -20,7 +20,7 @@ pull request ──► terraform.yml "plan"  (role gha-terraform-plan, plan show
 merge to main ──► terraform.yml "apply" (waits for approval in environment dev, role gha-terraform-apply)
 ```
 
-No AWS keys exist anywhere – both jobs use GitHub OIDC.
+No AWS keys exist anywhere – both jobs use GitHub OIDC. The role trust policies match GitHub's ID-based token subject (`repo:<owner>@<owner_id>/<repo>@<repo_id>:...`), so a renamed or re-created repository with the same name cannot assume them.
 
 ## One-time setup (already done for this account)
 

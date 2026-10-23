@@ -15,6 +15,8 @@ module "github_oidc" {
   source               = "../../modules/github_oidc"
   name_prefix          = local.name_prefix
   github_repo          = var.github_repo
+  github_owner_id      = var.github_owner_id
+  github_repo_id       = var.github_repo_id
   state_bucket         = "stellenradar-tfstate-${data.aws_caller_identity.current.account_id}"
   create_oidc_provider = false
 }
