@@ -20,3 +20,18 @@ module "github_oidc" {
   state_bucket         = "stellenradar-tfstate-${data.aws_caller_identity.current.account_id}"
   create_oidc_provider = false
 }
+
+module "storage" {
+  source        = "../../modules/storage"
+  name_prefix   = local.name_prefix
+  account_id    = data.aws_caller_identity.current.account_id
+  force_destroy = true # dev only – terraform destroy must be able to remove everything (NFR-05)
+}
+
+module "catalog" {
+  source                = "../../modules/catalog"
+  name_prefix           = local.name_prefix
+  data_bucket           = module.storage.bucket_names["data"]
+  athena_results_bucket = module.storage.bucket_names["athena-results"]
+  force_destroy         = true
+}
