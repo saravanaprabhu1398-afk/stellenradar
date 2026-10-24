@@ -21,7 +21,7 @@ Items marked **⚠ Spike** depend on a Week 1 spike (HLD §10) and must be confi
 | Tags (provider `default_tags`) | `project=stellenradar`, `env=dev`, `managed_by=terraform`, `component=<name>` |
 | Identifiers | `run_date` = business date in Europe/Berlin (`YYYY-MM-DD`). `run_id` = Step Functions execution name, `<run_date>T<HHMMSS>Z-<4 hex>` – unique per execution, so re-runs of a date get a new `run_id` |
 | Timestamps | Stored as UTC `timestamp(6)`; converted to Europe/Berlin only for display |
-| Logging | Structured JSON via **AWS Lambda Powertools** (`Logger`, `Metrics`); every log line has `run_id`, `run_date`, `component` |
+| Logging | One JSON object per line from a small stdlib formatter in `src/common/logging.py` (no Powertools layer to pin and update); every log line has `component`, and pipeline logs add `run_id` |
 | Metrics | CloudWatch Embedded Metric Format, namespace `Stellenradar` |
 | Code style | `ruff` (lint + format), type hints, `mypy` on shared code |
 | SQL style | Lower-case keywords in dbt; upper-case in raw Athena scripts; one statement per file |
@@ -46,7 +46,7 @@ stellenradar/
 │   └── envs/dev/                  # main.tf, variables.tf, backend.tf, dev.auto.tfvars (git-ignored)
 ├── src/
 │   ├── common/                    # shared: config, logging, s3 helpers, athena client
-│   ├── ingest/                    # handler.py, ba_client.py, search_terms.yaml
+│   ├── ingest/                    # handler.py, ba_client.py, search_terms.json
 │   ├── enrich/                    # handler.py, schema.json, validate.py, skills_taxonomy.yaml
 │   │   └── prompts/v1/            # system.md, user.md
 │   ├── embed/                     # handler.py
@@ -70,7 +70,7 @@ stellenradar/
 
 | Setting | Where it lives | Example |
 |---|---|---|
-| Search terms | `src/ingest/search_terms.yaml` (in Git) | `["Data Engineer", "Analytics Engineer", "Big Data Engineer", "ETL Entwickler"]` (spike S1) |
+| Search terms | `src/ingest/search_terms.json` (in Git) | `["Data Engineer", "Analytics Engineer", "Big Data Engineer", "ETL Entwickler"]` (spike S1) |
 | Model IDs | Terraform variables → Lambda environment | `EXTRACT_MODEL_ID = eu.amazon.nova-lite-v1:0`, `EMBED_MODEL_ID = amazon.titan-embed-text-v2:0` |
 | Prompt version | Folder name under `prompts/` + env var `PROMPT_VERSION` | `v1` |
 | Enrichment cap | Env var `MAX_ENRICH_PER_RUN` – postings above the cap stay on the work list for the next run ([cost model §4.3](06-cost-model.md)) | `200` |
@@ -105,7 +105,7 @@ No secret is ever stored in a Lambda environment variable, Step Functions input 
 **Logic**
 
 ```text
-load search_terms.yaml
+load search_terms.json
 load previous list index  s3://…/raw/state/list_index.json.gz   # {refnr: list_hash}
 for term in search_terms:
     for page in 1..N until empty or page cap (50):
@@ -551,7 +551,7 @@ Execution timeout: 2 hours. Execution history retained 90 days.
 | Version | Terraform ≥ 1.10, AWS provider ~> 6.x (pinned in `.terraform.lock.hcl`) |
 | State | `infra/bootstrap` creates `stellenradar-tfstate-<account>` (versioned, encrypted, public access blocked). `envs/dev/backend.tf` uses `backend "s3" { use_lockfile = true }` |
 | Modules | One per concern (§2). `envs/dev/main.tf` only wires modules together |
-| Lambda packaging | `make build` creates one zip per function under `build/` plus a shared dependency layer (`pg8000`, `jsonschema`, `jinja2`, `pyyaml`) built with `pip --platform manylinux2014_aarch64 --only-binary=:all:`. Powertools via the AWS-published public layer (pinned ARN) |
+| Lambda packaging | Terraform builds each function zip itself (`archive_file` over the needed `src/` packages, deterministic timestamps), so CI needs no build step. Functions with third-party dependencies (`pg8000`, `jsonschema`, `jinja2`) get a shared layer built with `pip --platform manylinux2014_aarch64 --only-binary=:all:` when they are added |
 | Validation | `terraform fmt -check`, `terraform validate`, `tflint`, `checkov` (soft-fail initially) in CI |
 | Destroy | `terraform destroy` removes everything; buckets have `force_destroy = true` in dev only |
 

@@ -52,3 +52,10 @@ spikes/**/out/
 # Terraform backend config (contains the account-specific bucket name)
 backend.hcl
 *.tfplan
+
+# Terraform writes Lambda zips here
+.build/
+ingest-smoke.json
+.coverage
+.pytest_cache/
+.ruff_cache/
