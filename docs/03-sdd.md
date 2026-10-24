@@ -160,9 +160,9 @@ User-Agent: `stellenradar/0.1 (+https://github.com/saravanaprabhu1398-afk/stelle
 
 Run by Step Functions with the Athena `startQueryExecution.sync` integration in workgroup `stellenradar-dev`. Statements are templated with `${run_id}`, `${run_date}` and `${ingested_at}`.
 
-**Raw tables** (external, JSON, partition projection on `ingest_date` and `run_id` – no crawler):
-- `raw.search_results` – one row per listed posting per run
-- `raw.posting_details` – one row per fetched detail record
+**Raw table** (Terraform, `infra/modules/catalog/raw_tables.tf`): `stellenradar_raw.postings_lines`, one gzip JSON Lines document per row as a single `line` string, partition projection on `ingest_date` (date) and `run_id` (injected – queries must name it), no crawler. Search and detail lines share the prefix and are told apart with the `"$path"` pseudo-column. Parsing with `json_extract` in SQL keeps the table stable when the BA adds or drops fields.
+
+**Statement files** live in `sql/athena/` (one statement per file, `{placeholders}` filled by the runner): `ddl/` creates the Iceberg tables, `curate/_details.sql` and `_listed.sql` are the normalising subqueries for one run (they replace the "staging view", which could not be parameterised by run), and `curate/0x0_*.sql` are the SCD2 steps below. `scripts/athena_sql.py` runs them for setup, manual runs and spike S4; Step Functions runs the same files in production.
 
 **Staging view** `staging.v_details_today`: flattens today's detail records for the run, normalises whitespace, and computes
 

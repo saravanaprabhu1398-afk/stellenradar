@@ -51,8 +51,10 @@ def posting(refnr, changed="2026-10-20"):
     return {"referenznummer": refnr, "stellenangebotsTitel": f"Data Engineer {refnr}", "aenderungsdatum": changed}
 
 
-def run(client, store, terms=("Data Engineer",), max_details=500, max_pages=50, seconds_left=lambda: 900):
-    return run_ingest(client, store, list(terms), "run-1", "2026-10-24", max_details, max_pages, seconds_left)
+def run(client, store, terms=("Data Engineer",), max_details=500, max_pages=50, seconds_left=lambda: 900, full=True):
+    return run_ingest(
+        client, store, list(terms), "run-1", "2026-10-24", max_details, max_pages, seconds_left, full_term_list=full
+    )
 
 
 def test_first_run_fetches_all_details_and_writes_raw_files():
@@ -146,6 +148,37 @@ def test_complete_run_prunes_postings_no_longer_listed():
     store = FakeStore({LIST_INDEX_KEY: {"GONE": "hash"}})
     run(FakeClient({"Data Engineer": [[posting("A")]]}), store)
     assert set(store.objects[LIST_INDEX_KEY]) == {"A"}
+
+
+def test_subset_of_terms_is_never_complete_and_does_not_prune_index():
+    store = FakeStore({LIST_INDEX_KEY: {"OTHER": "hash"}})
+    manifest = run(FakeClient({"ETL Entwickler": [[posting("A")]]}), store, terms=("ETL Entwickler",), full=False)
+
+    assert manifest["complete"] is False
+    assert manifest["full_term_list"] is False
+    assert "OTHER" in store.objects[LIST_INDEX_KEY]
+
+
+def test_handler_marks_overridden_terms_as_partial(monkeypatch):
+    import ingest.handler as h
+
+    captured = {}
+    monkeypatch.setenv("DATA_BUCKET", "bucket")
+    monkeypatch.setattr(h, "S3Store", lambda bucket: FakeStore())
+    monkeypatch.setattr(h, "run_ingest", lambda **kw: captured.update(kw) or {})
+
+    class Ctx:
+        def get_remaining_time_in_millis(self):
+            return 900_000
+
+    h.handler({"run_id": "r", "run_date": "2026-10-24", "search_terms": ["ETL Entwickler"]}, Ctx())
+    assert captured["full_term_list"] is False
+    assert captured["terms"] == ["ETL Entwickler"]
+    assert captured["seconds_left"]() == 900
+
+    h.handler({"run_id": "r", "run_date": "2026-10-24"}, Ctx())
+    assert captured["full_term_list"] is True
+    assert captured["terms"] == h.load_search_terms()
 
 
 def test_more_than_half_of_terms_failing_raises_after_writing_manifest():
