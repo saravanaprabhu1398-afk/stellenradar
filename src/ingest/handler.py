@@ -61,6 +61,7 @@ def run_ingest(
     max_details: int,
     max_pages: int,
     seconds_left: Callable[[], float],
+    full_term_list: bool = True,
 ) -> dict:
     prefix = f"raw/postings/ingest_date={run_date}/run_id={run_id}/"
     now = lambda: datetime.now(UTC).isoformat()  # noqa: E731
@@ -103,7 +104,9 @@ def run_ingest(
             failed_terms.append(term)
             log.warning("search term failed", extra={"fields": {"run_id": run_id, "term": term, "error": str(e)}})
 
-    complete = not failed_terms and not capped_terms
+    # Only a listing of *all* configured terms may be used to close postings (or prune the index):
+    # a smoke run with a subset of terms would otherwise "close" everything it did not search for.
+    complete = full_term_list and not failed_terms and not capped_terms
 
     # 2) Change detection against the previous run's index.
     previous: dict[str, str] = store.get_json_gz(LIST_INDEX_KEY) or {}
@@ -161,6 +164,7 @@ def run_ingest(
         "run_id": run_id,
         "run_date": run_date,
         "complete": complete,
+        "full_term_list": full_term_list,
         "terms": len(terms),
         "terms_failed": failed_terms,
         "terms_capped": capped_terms,
@@ -185,13 +189,15 @@ def handler(event: dict, context: Any) -> dict:
     """Event: {"run_id", "run_date"}; optional overrides for smoke tests: "search_terms", "max_details"."""
     run_id = event["run_id"]
     run_date = event["run_date"]
+    override = event.get("search_terms")
     return run_ingest(
         client=BAClient(USER_AGENT),
         store=S3Store(os.environ["DATA_BUCKET"]),
-        terms=event.get("search_terms") or load_search_terms(),
+        terms=override or load_search_terms(),
         run_id=run_id,
         run_date=run_date,
         max_details=int(event.get("max_details", os.environ.get("MAX_DETAILS", "500"))),
         max_pages=int(os.environ.get("MAX_PAGES", "50")),
         seconds_left=lambda: context.get_remaining_time_in_millis() / 1000,
+        full_term_list=not override,
     )

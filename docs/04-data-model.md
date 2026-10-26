@@ -61,7 +61,7 @@ flowchart LR
 
 ## 3. Raw layer (Glue database `raw`)
 
-External tables over gzip JSON, partition projection on `ingest_date` (date) and `run_id` (injected). Written only by the ingest Lambda; never updated.
+Written only by the ingest Lambda; never updated. In the catalog there is **one** table, `stellenradar_raw.postings_lines` (column `line string`, partitions `ingest_date`, `run_id`), over the gzip JSON Lines files. Each line is `{"meta": {...}, "posting": {...}}` (search files) or `{"meta": {...}, "detail": {...}}` (detail files); the logical fields below are read with `json_extract_scalar` in `sql/athena/curate/_details.sql` and `_listed.sql`.
 
 ### 3.1 `raw.search_results`
 
