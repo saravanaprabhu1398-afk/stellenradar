@@ -2,7 +2,7 @@
 
 | Status | Date | Deciders | Related |
 |---|---|---|---|
-| Proposed | 2026-10-19 | Prabhu Saravanan | PRD FR-04, FR-05, FR-23 · HLD §5, §6.5 |
+| **Accepted** (spike S4 passed 2026-10-26) | 2026-10-19 | Prabhu Saravanan | PRD FR-04, FR-05, FR-23 · HLD §5, §6.5 |
 
 ## Context
 
@@ -46,5 +46,5 @@ Use **Apache Iceberg (format version 2)** for every table in `curated` and `mart
 
 ## Validation and revisit triggers
 
-- **Spike S4 (Week 1):** prove the SCD2 pattern with Athena `MERGE` on a 100-row sample, including a re-run producing no duplicates.
+- ✅ **Spike S4 (2026-10-26, [results](../spikes/S4-athena-scd2.md)):** SCD2 with separate close and insert statements works in Athena on 500 real postings; a re-run changed nothing and all invariants held.
 - Revisit if the platform moves to Spark-based processing (EMR Serverless / Glue), where Delta would be equally viable.

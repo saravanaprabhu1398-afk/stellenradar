@@ -375,7 +375,7 @@ These are design assumptions that must be checked early in Week 1. Each takes le
 | S1 – BA API | Do the search and job-detail endpoints still return the full description text? What are the page size and rate limits? **Done 2026-10-21** ([results](spikes/S1-ba-api.md)): v6 search + v4 detail work, full text returned, ~1,000 postings | – |
 | S2 – Bedrock access | Which extraction and embedding model IDs are enabled in eu-central-1 or via the EU inference profile? **Done 2026-10-21:** Titan V2 and Nova Lite confirmed; Claude needs a Marketplace subscription (deferred) | – |
 | S3 – DMS per run | Does a new task on a new instance resume CDC from the saved checkpoint and persistent slot? Can DMS in private subnets read its secret and write to S3 with only the gateway endpoint? | Always-on `dms.t3.micro` (~$15/month) with other costs cut – new ADR |
-| S4 – Athena MERGE | Does Athena `MERGE INTO` on Iceberg handle the SCD2 pattern (close old row + insert new row) in one statement, or does it need two? | Two statements in one Step Functions step |
+| S4 – Athena MERGE | Does Athena `MERGE INTO` on Iceberg handle the SCD2 pattern (close old row + insert new row) in one statement, or does it need two? **Done 2026-10-26** ([results](spikes/S4-athena-scd2.md)): separate close and insert statements, idempotent | – |
 
 ## 11. Architecture decision records
 

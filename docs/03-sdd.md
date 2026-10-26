@@ -654,5 +654,5 @@ Branch protection on `main`: PR required, CI green required, linear history.
 | O1 | ✅ Spike S1 done ([results](spikes/S1-ba-api.md)): search `/pc/v6/jobs`, detail `/pc/v4/jobdetails/{base64}`; field mapping in data model §3 | – |
 | O2 | ✅ Spike S2 done: `EMBED_MODEL_ID = amazon.titan-embed-text-v2:0`, `EXTRACT_MODEL_ID = eu.amazon.nova-lite-v1:0` (development default; final Nova model chosen in Week 2, [ADR-005](decisions/ADR-005-bedrock-models.md)). Confirm forced `toolChoice` works with the chosen Nova model | Week 2 |
 | O3 | CDC resume from checkpoint on a new task/instance, and DMS credential access without endpoints (Spike S3) | Week 2, day 1 |
-| O4 | Athena acceptance of the SCD2 statements (incl. `UPDATE … NOT IN (subquery)` on Iceberg) and reading the Athena result CSV with `ItemReader` (Spike S4) | Week 1 |
+| O4 | ✅ SCD2 statements accepted by Athena and idempotent ([spike S4](spikes/S4-athena-scd2.md)). Still open: reading the Athena result CSV with `ItemReader` | Week 2 (enrichment Map) |
 | O5 | Labelling guide for the 50-posting evaluation set | Test plan |
