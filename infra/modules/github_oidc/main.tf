@@ -1,3 +1,5 @@
+data "aws_region" "current" {}
+
 locals {
   oidc_host         = "token.actions.githubusercontent.com"
   repo_owner        = split("/", var.github_repo)[0]
@@ -68,8 +70,22 @@ data "aws_iam_policy_document" "plan_extra" {
   statement {
     sid       = "DenySecretValues"
     effect    = "Deny"
-    actions   = ["secretsmanager:GetSecretValue", "ssm:GetParameter*", "kms:Decrypt"]
+    actions   = ["secretsmanager:GetSecretValue", "ssm:GetParameter*"]
     resources = ["*"]
+  }
+
+  # Lambda environment variables are encrypted with the AWS-managed key and decrypted *via Lambda* when the plan
+  # reads a function; without this exception every plan shows them as new. They never hold secrets (SDD §3).
+  statement {
+    sid       = "DenyDecryptExceptViaLambda"
+    effect    = "Deny"
+    actions   = ["kms:Decrypt"]
+    resources = ["*"]
+    condition {
+      test     = "StringNotEquals"
+      variable = "kms:ViaService"
+      values   = ["lambda.${data.aws_region.current.region}.amazonaws.com"]
+    }
   }
 }
 
