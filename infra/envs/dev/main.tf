@@ -82,3 +82,87 @@ module "ingest" {
     MAX_PAGES   = "50"
   }
 }
+
+# ---------- Curate Lambda: SCD2 merge in Athena (SDD §4.2) ----------
+
+data "aws_region" "current" {}
+
+locals {
+  glue_prefix = "arn:aws:glue:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}"
+  athena_wg   = "arn:aws:athena:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:workgroup/${module.catalog.athena_workgroup}"
+}
+
+data "aws_iam_policy_document" "curate" {
+  statement {
+    sid       = "RunQueries"
+    actions   = ["athena:StartQueryExecution", "athena:GetQueryExecution", "athena:GetQueryResults", "athena:StopQueryExecution", "athena:GetWorkGroup"]
+    resources = [local.athena_wg]
+  }
+
+  statement {
+    sid = "Catalog"
+    actions = [
+      "glue:GetDatabase", "glue:GetDatabases", "glue:GetTable", "glue:GetTables",
+      "glue:GetPartition", "glue:GetPartitions", "glue:BatchGetPartition",
+      "glue:CreateTable", "glue:UpdateTable",
+    ]
+    resources = [
+      "${local.glue_prefix}:catalog",
+      "${local.glue_prefix}:database/${module.catalog.database_names["raw"]}",
+      "${local.glue_prefix}:database/${module.catalog.database_names["curated"]}",
+      "${local.glue_prefix}:table/${module.catalog.database_names["raw"]}/*",
+      "${local.glue_prefix}:table/${module.catalog.database_names["curated"]}/*",
+    ]
+  }
+
+  statement {
+    sid       = "ListBuckets"
+    actions   = ["s3:ListBucket", "s3:GetBucketLocation"]
+    resources = [module.storage.bucket_arns["data"], module.storage.bucket_arns["athena-results"]]
+  }
+
+  statement {
+    sid       = "ReadRaw"
+    actions   = ["s3:GetObject"]
+    resources = ["${module.storage.bucket_arns["data"]}/raw/*"]
+  }
+
+  statement {
+    sid       = "WriteCurated"
+    actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+    resources = ["${module.storage.bucket_arns["data"]}/curated/*"]
+  }
+
+  statement {
+    sid       = "QueryResults"
+    actions   = ["s3:GetObject", "s3:PutObject", "s3:AbortMultipartUpload"]
+    resources = ["${module.storage.bucket_arns["athena-results"]}/*"]
+  }
+}
+
+module "curate" {
+  source      = "../../modules/lambda_function"
+  name        = "${local.name_prefix}-curate"
+  description = "SCD2 merge of one ingest run into curated.postings (SDD 4.2)"
+  handler     = "curate.handler.handler"
+  source_root = "${path.root}/../../../src"
+  packages    = ["common", "curate"]
+  memory_mb   = 256
+  timeout_s   = 600
+  policy_json = data.aws_iam_policy_document.curate.json
+
+  environment = {
+    DATA_BUCKET      = module.storage.bucket_names["data"]
+    ATHENA_WORKGROUP = module.catalog.athena_workgroup
+  }
+}
+
+# ---------- Daily pipeline: schedule -> Step Functions -> ingest -> curate (SDD §4.10) ----------
+
+module "orchestration" {
+  source              = "../../modules/orchestration"
+  name_prefix         = local.name_prefix
+  alert_email         = var.alert_email
+  ingest_function_arn = module.ingest.function_arn
+  curate_function_arn = module.curate.function_arn
+}

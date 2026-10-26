@@ -2,7 +2,7 @@
 
 | Date | Author | Status | How to repeat |
 |---|---|---|---|
-| 2026-10-26 | Prabhu Saravanan | **PASS** | `make spike-s4 RUN_ID=<id> RUN_DATE=<date>` ([`scripts/athena_sql.py`](../../scripts/athena_sql.py)) |
+| 2026-10-26 | Prabhu Saravanan | **PASS** | `make spike-s4 RUN_ID=<id> RUN_DATE=<date>` ([`scripts/athena_sql.py`](../../scripts/athena_sql.py), SQL in `src/curate/sql/`) |
 
 **Question:** can Athena maintain SCD Type 2 history in an Iceberg table with plain SQL – and is a re-run of the same day harmless? ([System Design §10](../02-system-design.md), [ADR-001](../decisions/ADR-001-iceberg-table-format.md), [SDD §4.2](../03-sdd.md))
 

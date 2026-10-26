@@ -1,13 +1,14 @@
 # Stellenradar – developer commands (GNU Make 3.81 compatible)
 TF_DIR := infra/envs/dev
 
-.PHONY: help venv lint test athena-ddl curate curate-check spike-s4 tf-fmt tf-init tf-plan tf-apply bootstrap-ci github-setup invoke-ingest-smoke
+.PHONY: help venv lint test run-pipeline athena-ddl curate curate-check spike-s4 tf-fmt tf-init tf-plan tf-apply bootstrap-ci github-setup invoke-ingest-smoke
 
 help:
 	@echo "make venv          Create .venv with Python 3.12 and dev tools"
 	@echo "make lint          Ruff lint + format check"
 	@echo "make test          Unit tests with coverage"
 	@echo "make invoke-ingest-smoke  Small real ingest run in AWS (1 term, 3 details)"
+	@echo "make run-pipeline  Start the daily state machine now (same as the 06:00 schedule)"
 	@echo "make athena-ddl    Create the curated Iceberg tables (idempotent)"
 	@echo "make curate RUN_ID=... RUN_DATE=...    SCD2 merge of one ingest run into curated.postings"
 	@echo "make curate-check  Row counts and SCD2 invariants of curated.postings"
@@ -36,6 +37,11 @@ invoke-ingest-smoke:
 	  --payload '{"run_id":"smoke-$(shell date -u +%Y%m%dT%H%M%SZ)","run_date":"$(shell date -u +%Y-%m-%d)","search_terms":["ETL Entwickler"],"max_details":3}' \
 	  ingest-smoke.json
 	@cat ingest-smoke.json; echo
+
+run-pipeline:
+	aws stepfunctions start-execution \
+	  --state-machine-arn $$(terraform -chdir=$(TF_DIR) output -raw state_machine_arn) \
+	  --query executionArn --output text
 
 athena-ddl:
 	.venv/bin/python scripts/athena_sql.py ddl

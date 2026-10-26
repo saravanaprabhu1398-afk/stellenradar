@@ -1,6 +1,6 @@
 # Athena SQL
 
-Statements run by `scripts/athena_sql.py` now and by Step Functions later (SDD §4.2). Placeholders in
+Statements run by the curate Lambda in the daily pipeline and by `scripts/athena_sql.py` for manual runs (SDD §4.2). Placeholders in
 `{curly_braces}` are filled in by the runner; there is exactly one statement per file.
 
 | Placeholder | Meaning |
