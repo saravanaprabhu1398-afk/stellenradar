@@ -24,3 +24,11 @@ output "athena_workgroup" {
 output "ingest_function_name" {
   value = module.ingest.function_name
 }
+
+output "curate_function_name" {
+  value = module.curate.function_name
+}
+
+output "state_machine_arn" {
+  value = module.orchestration.state_machine_arn
+}

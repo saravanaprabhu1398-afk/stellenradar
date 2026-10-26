@@ -195,7 +195,8 @@ stellenradar/
 ├── infra/                  # Terraform: bootstrap/, modules/, envs/dev/ (see infra/README.md)
 ├── src/                    # Lambda code, one package per function
 │   ├── common/             # shared logging and S3 helpers
-│   └── ingest/             # BA job search → raw S3
+│   ├── ingest/             # BA job search → raw S3
+│   └── curate/             # SCD2 merge into Iceberg via Athena (SQL in curate/sql/)
 ├── tests/unit/             # pytest, no network or AWS needed
 ├── dbt/                    # dbt-athena project (Week 3)
 ├── eval/                   # Labelled set + scoring script (Week 2)
