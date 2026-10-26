@@ -4,7 +4,7 @@ Each ADR records one significant decision: the context, the options considered, 
 
 | ADR | Title | Status |
 |---|---|---|
-| [ADR-001](ADR-001-iceberg-table-format.md) | Apache Iceberg as table format | Proposed |
+| [ADR-001](ADR-001-iceberg-table-format.md) | Apache Iceberg as table format | Accepted |
 | [ADR-002](ADR-002-pgvector-vector-store.md) | pgvector on RDS as vector store | Proposed |
 | [ADR-003](ADR-003-no-nat-gateway.md) | No NAT Gateway: split internet-facing and VPC-bound Lambdas | Proposed |
 | [ADR-004](ADR-004-orchestration.md) | Step Functions for orchestration, dbt on GitHub Actions | Proposed |
