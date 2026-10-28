@@ -141,7 +141,7 @@ One row per fetched detail record from `/pc/v4/jobdetails/{base64(referenznummer
 
 ### 4.2 `curated.posting_enrichment`
 
-**Grain:** one row per posting version per prompt version. **Primary key:** `(refnr, content_hash, prompt_version)`. **Writer:** Step Functions (`MERGE` from enrich staging). **Partitioning:** none (small).
+**Grain:** one row per posting version per prompt version. **Primary key:** `(refnr, content_hash, prompt_version)`. **Writer:** Enrich Lambda (`INSERT … WHERE NOT EXISTS`, SDD §4.3). **Partitioning:** none (small).
 
 | Column | Type | Null | Class | Description |
 |---|---|---|---|---|
@@ -158,12 +158,12 @@ One row per fetched detail record from `/pc/v4/jobdetails/{base64(referenznummer
 | `english_only` | boolean | no | Public | |
 | `visa_sponsorship_mentioned` | boolean | no | Public | |
 | `remote_policy` | string | yes | Public | `onsite`, `hybrid`, `remote` |
-| `input_tokens` | int | no | Internal | Bedrock usage |
+| `input_tokens` | int | no | Internal | Bedrock usage, summed over attempts |
 | `output_tokens` | int | no | Internal | Bedrock usage |
 | `enriched_at` | timestamp(6) | no | Internal | |
 | `run_id` | string | no | Internal | |
 
-**Rules:** `salary_min_eur ≤ salary_max_eur` when both present; salaries within 10,000–400,000; enums valid; every current posting has a row for the active prompt version after a successful run, except dead-lettered ones (≤ 10%).
+**Rules:** `salary_min_eur ≤ salary_max_eur` when both present; salaries within 10,000–400,000; enums valid; every current posting has a row for the active prompt version after a successful run, except dead-lettered ones (≤ 10%) and the backlog beyond `MAX_ENRICH_PER_RUN` (200 per run), which later runs pick up.
 
 ### 4.3 `curated.embedding_log`
 
@@ -278,7 +278,7 @@ One row per fetched detail record from `/pc/v4/jobdetails/{base64(referenznummer
 | DQ-03 | `curated.postings` | `is_current` ⇔ `valid_to is null` | dbt test | dbt fails |
 | DQ-04 | `curated.postings` | Freshness: max `valid_from` or latest manifest < 26 h | dbt source freshness | warn 26 h, error 48 h |
 | DQ-05 | `curated.posting_enrichment` | Enums valid, salary range, min ≤ max | Enrich `validate()` + dbt tests | Dead letter / dbt fails |
-| DQ-06 | `curated.posting_enrichment` | Dead-letter rate ≤ 10% per run | Distributed Map tolerance + metric | Run fails above 10% |
+| DQ-06 | `curated.posting_enrichment` | Dead-letter rate ≤ 10% per run | Check in the Enrich Lambda (min. 3 dead letters) | Run fails above 10% |
 | DQ-07 | `curated.applications` | `application_id` unique; `status` valid | dbt tests | dbt fails |
 | DQ-08 | `marts.top_matches_daily` | 1–10 rows for today; ranks 1..n unique | dbt custom test | dbt fails → no digest |
 | DQ-09 | `marts.market_overview` | Remote shares sum to 1.0 ± 0.001 | dbt `expression_is_true` | dbt fails |

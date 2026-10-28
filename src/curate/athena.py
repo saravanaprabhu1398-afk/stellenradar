@@ -83,6 +83,25 @@ class Athena:
         rows = self.client.get_query_results(QueryExecutionId=qid)["ResultSet"]["Rows"]
         return int(rows[1]["Data"][0]["VarCharValue"])
 
+    def rows(self, sql: str, label: str) -> list[dict[str, str | None]]:
+        """Run a SELECT and return all result rows as dicts (NULL -> None), following pagination."""
+        qid, _ = self._wait(sql, label)
+        header: list[str] = []
+        out: list[dict[str, str | None]] = []
+        token = None
+        while True:
+            kwargs = {"QueryExecutionId": qid, **({"NextToken": token} if token else {})}
+            page = self.client.get_query_results(**kwargs)
+            for row in page["ResultSet"]["Rows"]:
+                values = [cell.get("VarCharValue") for cell in row["Data"]]
+                if not header:
+                    header = [v or "" for v in values]  # first row of the first page is the header
+                    continue
+                out.append(dict(zip(header, values, strict=True)))
+            token = page.get("NextToken")
+            if not token:
+                return out
+
 
 def run_ddl(athena: Athena, data_bucket: str) -> None:
     for name, sql in statements("ddl"):

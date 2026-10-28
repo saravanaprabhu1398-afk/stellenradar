@@ -1,0 +1,50 @@
+{
+  "type": "object",
+  "properties": {
+    "skills": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Concrete technologies, tools, languages and methods required or preferred (max 25). No soft skills."
+    },
+    "cloud_platforms": {
+      "type": "array",
+      "items": {"type": "string", "enum": ["aws", "azure", "gcp"]},
+      "description": "Public cloud platforms the role works with."
+    },
+    "seniority": {
+      "type": ["string", "null"],
+      "enum": ["junior", "mid", "senior", "lead", "principal", null],
+      "description": "Seniority level; null if the ad does not indicate one."
+    },
+    "salary_min_eur": {
+      "type": ["integer", "null"],
+      "description": "Lower bound of the stated yearly gross salary in EUR; null if no salary is stated."
+    },
+    "salary_max_eur": {
+      "type": ["integer", "null"],
+      "description": "Upper bound of the stated yearly gross salary in EUR; null if no salary is stated."
+    },
+    "german_level_required": {
+      "type": "string",
+      "enum": ["none", "basic", "fluent"],
+      "description": "German needed for the role: none (not required or not mentioned for an English ad), basic, or fluent (fließend, verhandlungssicher, C1/C2, or a German ad that asks for very good German)."
+    },
+    "english_only": {
+      "type": "boolean",
+      "description": "True only if the ad says German is not required or explicitly says English is sufficient."
+    },
+    "visa_sponsorship_mentioned": {
+      "type": "boolean",
+      "description": "True only if the ad mentions visa sponsorship, work permit support or relocation support."
+    },
+    "remote_policy": {
+      "type": ["string", "null"],
+      "enum": ["onsite", "hybrid", "remote", null],
+      "description": "Work location model; null if the ad does not say."
+    }
+  },
+  "required": [
+    "skills", "cloud_platforms", "seniority", "salary_min_eur", "salary_max_eur",
+    "german_level_required", "english_only", "visa_sponsorship_mentioned", "remote_policy"
+  ]
+}

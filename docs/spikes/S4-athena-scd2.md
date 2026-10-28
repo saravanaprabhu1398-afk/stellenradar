@@ -33,7 +33,20 @@ SCD2 therefore uses **separate statements** (close, then insert) – the fallbac
 - **No false closures:** close-disappeared ran (manifest `complete = true`) and closed nothing, because every curated posting appeared in the full listing.
 - **Cost:** ~1–1.7 MB scanned per statement (Athena bills a 10 MB minimum per query) – negligible.
 
-## Not covered yet
+## Confirmed in the first scheduled-style run (2026-10-27)
 
-- A real **changed** posting producing a second version, and a real **disappeared** posting being closed. Both appear naturally once daily runs start; the invariant checks in `make curate-check` (and later dbt tests DQ-02/DQ-03) watch for them.
-- Reading the Athena result CSV with a Step Functions `ItemReader` (SDD O4, second half) – tested when the enrichment Map is built.
+The first full pipeline run (`make run-pipeline`, Ingest → Curate in Step Functions) merged a new complete listing into the S4 data:
+
+| Result | Count |
+|---|---|
+| Changed postings closed and re-inserted as a new version | 8 |
+| Disappeared postings closed (listing `complete = true`) | 22 |
+| Current rows / total versions / closed versions after the run | 857 / 887 / 30 |
+| Multiple current versions per `refnr` | 0 |
+| `is_current` ⇔ `valid_to IS NULL` violations | 0 |
+
+Both cases that the spike could not cover with one snapshot now work on real data, and the invariants held.
+
+## Not covered
+
+- Reading the Athena result CSV with a Step Functions `ItemReader` – no longer needed: enrichment runs in a single Lambda that reads its work list with `GetQueryResults` (SDD §4.3).

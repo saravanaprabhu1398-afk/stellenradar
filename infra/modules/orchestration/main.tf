@@ -29,7 +29,7 @@ resource "aws_sns_topic_policy" "alerts" {
   policy = data.aws_iam_policy_document.alerts_topic.json
 }
 
-# ---------- State machine (SDD §4.10, first slice: ingest -> curate) ----------
+# ---------- State machine (SDD §4.10: ingest -> curate -> enrich) ----------
 
 locals {
   lambda_retry = [{
@@ -41,7 +41,7 @@ locals {
   to_failure = [{ ErrorEquals = ["States.ALL"], ResultPath = "$.error", Next = "NotifyFailure" }]
 
   definition = {
-    Comment        = "Stellenradar daily run: ingest BA postings, then SCD2-merge them into curated.postings"
+    Comment        = "Stellenradar daily run: ingest BA postings, SCD2-merge them into curated.postings, enrich new versions"
     StartAt        = "Ingest"
     TimeoutSeconds = 7200
     States = {
@@ -77,6 +77,23 @@ locals {
         ResultSelector = { "checks.$" = "$.Payload" }
         ResultPath     = "$.curate"
         TimeoutSeconds = 660
+        Retry          = local.lambda_retry
+        Catch          = local.to_failure
+        Next           = "Enrich"
+      }
+      Enrich = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::lambda:invoke"
+        Parameters = {
+          FunctionName = var.enrich_function_arn
+          Payload = {
+            "run_id.$"   = "$.ingest.manifest.run_id"
+            "run_date.$" = "$.ingest.manifest.run_date"
+          }
+        }
+        ResultSelector = { "stats.$" = "$.Payload" }
+        ResultPath     = "$.enrich"
+        TimeoutSeconds = 960
         Retry          = local.lambda_retry
         Catch          = local.to_failure
         Next           = "PublishSuccess"
@@ -134,6 +151,7 @@ data "aws_iam_policy_document" "sfn" {
     resources = [
       var.ingest_function_arn, "${var.ingest_function_arn}:*",
       var.curate_function_arn, "${var.curate_function_arn}:*",
+      var.enrich_function_arn, "${var.enrich_function_arn}:*",
     ]
   }
   statement {

@@ -1,8 +1,8 @@
 locals {
-  # Python sources, data files and SQL of the selected packages; bytecode caches are never packaged.
+  # Python sources, data files, SQL and prompt templates of the selected packages; bytecode caches are never packaged.
   files = sort([
     for f in flatten([for p in var.packages : tolist(fileset(var.source_root, "${p}/**"))]) : f
-    if can(regex("\\.(py|json|sql)$", f)) && !can(regex("__pycache__", f))
+    if can(regex("(\\.(py|json|sql)|/prompts/.+\\.md)$", f)) && !can(regex("__pycache__", f))
   ])
 }
 
