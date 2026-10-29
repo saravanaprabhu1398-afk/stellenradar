@@ -40,7 +40,7 @@ invoke-ingest-smoke:
 
 run-pipeline:
 	aws stepfunctions start-execution \
-	  --state-machine-arn $$(terraform -chdir=$(TF_DIR) output -raw state_machine_arn) \
+	  --state-machine-arn arn:aws:states:eu-central-1:$$(aws sts get-caller-identity --query Account --output text):stateMachine:stellenradar-dev-daily \
 	  --query executionArn --output text
 
 athena-ddl:

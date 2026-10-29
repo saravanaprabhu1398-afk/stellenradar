@@ -228,20 +228,20 @@ WHERE NOT EXISTS (SELECT 1 FROM curated.postings t
 
 Why it is idempotent: after a successful run, every fetched posting has a current row with the same hash, so re-running 01 and 03 changes nothing; 02 only touches rows that are still current and absent.
 
-**Work list for enrichment** (`04_select_to_enrich.sql`) – everything current that has no enrichment for the active prompt version. Because it is computed from table state, failed or skipped postings are retried automatically next run:
+**Work list for enrichment** (`src/enrich/sql/work_list.sql`, run by the Enrich Lambda, §4.3) – everything current that has no enrichment for the active prompt version, newest first, capped per run. Because it is computed from table state, failed or skipped postings are retried automatically next run:
 
 ```sql
-SELECT p.refnr, p.content_hash, p.raw_s3_key
+SELECT p.refnr, p.content_hash, p.title, p.employer, p.location, p.description
 FROM curated.postings p
 LEFT JOIN curated.posting_enrichment e
   ON e.refnr = p.refnr AND e.content_hash = p.content_hash
- AND e.prompt_version = '${prompt_version}'
-WHERE p.is_current AND e.refnr IS NULL;
+ AND e.prompt_version = '{prompt_version}'
+WHERE p.is_current AND e.refnr IS NULL AND p.description IS NOT NULL
+ORDER BY p.published_at DESC NULLS LAST, p.refnr
+LIMIT {limit};
 ```
 
-This is a plain `SELECT`, not `UNLOAD`: Athena writes the result as **one** CSV file with a header row (`<QueryExecutionId>.csv` in the results bucket), which is exactly what the Distributed Map `ItemReader` needs. `UNLOAD` may split output into several header-less files. None of the selected columns can contain commas or quotes.
-
-Note: bumping `PROMPT_VERSION` puts **all** current postings back on the work list (~1,000 Bedrock calls, spike S1). That is intended – it is how a new prompt is evaluated on real data – but it must be budgeted in the cost model.
+Note: bumping `PROMPT_VERSION` puts **all** current postings back on the work list (~1,000 Bedrock calls, spike S1). That is intended – it is how a new prompt is evaluated on real data – but it must be budgeted in the cost model. With `MAX_ENRICH_PER_RUN = 200` the backlog drains over about five daily runs.
 
 A similar `05_unload_current.sql` writes the current `(refnr, content_hash)` list to `staging/current/run_id=…/` for the match step.
 
@@ -251,31 +251,39 @@ A similar `05_unload_current.sql` writes the current `(refnr, content_hash)` lis
 
 | Property | Value |
 |---|---|
-| Trigger | Step Functions **Distributed Map**: `ItemReader` reads the Athena result CSV of `04_select_to_enrich.sql` (`CSVHeaderLocation: FIRST_ROW`); `ItemBatcher` 10 items; `MaxConcurrency` 4; `ToleratedFailurePercentage` 10 |
+| Trigger | Step Functions `Enrich` task after `Curate` (one invocation per run) |
+| Work list | `src/enrich/sql/work_list.sql`: current versions in `curated.postings` with a description and no row in `curated.posting_enrichment` for the same `(refnr, content_hash, prompt_version)`; newest first; at most `MAX_ENRICH_PER_RUN` (200) |
+| Concurrency | thread pool of 4 Bedrock calls inside the Lambda |
 | Network | Outside VPC |
-| Memory / timeout | 256 MB / 120 s |
+| Memory / timeout | 512 MB / 900 s (stops starting new calls when < 120 s remain; skipped postings are picked up next run) |
 | Requirements | FR-06, FR-07, FR-08, FR-09 |
 
-**Logic per batch**
+**Why one Lambda instead of a Distributed Map (changed in Week 2).** The original design read the Athena result CSV with a Distributed Map `ItemReader` and ran batches of 10 in parallel Lambdas. At ≤ 200 postings per run and ~2–3 s per call, four threads finish in 2–3 minutes, well inside one invocation. A single Lambda removes the CSV hand-off, the Map's IAM (`s3:GetObject` on results, `states:StartExecution` for child runs) and the per-batch JSONL files, and keeps all retries, validation and dead-letter accounting in tested Python. The work list is read from `curated.postings` rather than raw, so only current versions are enriched and an unchanged posting is never sent twice. Revisit if a backfill needs thousands of postings in one run (then: Distributed Map, or several runs at 200).
+
+**Logic**
 
 ```text
-for item in batch:
-    detail = read JSON at item.raw_s3_key, select record by refnr
+work = athena.rows(work_list.sql)                      # refnr, content_hash, title, employer, location, description
+if not work: return
+in a pool of 4 threads, per posting:
     text = title + employer + location + description (truncated to 12,000 chars)
     response = bedrock.converse(
         modelId=EXTRACT_MODEL_ID,
         system=[prompts/v1/system.md],
         messages=[user.md rendered with text],
-        toolConfig={tools:[record_posting_fields(schema.json)], toolChoice:{tool:{name:"record_posting_fields"}}},
-        inferenceConfig={temperature:0, maxTokens:800})
-    fields = tool_use.input
-    errors = validate(fields)        # JSON schema + business rules
-    if errors: retry once with the errors appended to the prompt
-    if still invalid: write to staging/dead_letter/…; continue
-    normalise skills with skills_taxonomy.yaml
-    append row to staging/enrichment/run_id=…/batch_<map-index>.jsonl
-return {valid: n, dead_lettered: m, input_tokens, output_tokens}
+        toolConfig={tools:[record_posting_fields(schema.json)], toolChoice:{any:{}}},
+        inferenceConfig={temperature:0, maxTokens:1000})
+    errors = validate(tool_use.input)  # schema enums + business rules (validate.py)
+    if errors or no tool call: one retry, sending the errors back as a toolResult with status "error"
+    if still invalid or the call raised: dead letter
+    normalise skills with skills_taxonomy.json (lower-case, synonyms, strict character pattern, dedup, max 25)
+INSERT valid rows into curated.posting_enrichment in batches of 100
+write all valid rows to staging/enrichment/run_id=…/results.jsonl.gz, failures to staging/dead_letter/run_id=…/enrich.jsonl.gz
+fail the run if dead letters ≥ 3 and > 10 % of processed postings (after writing the good rows)
+return {candidates, enriched, dead_letters, skipped, input_tokens, output_tokens}
 ```
+
+`toolChoice: {any: {}}` with a single tool forces that tool; it is supported by the Nova models, while the `tool` form is not available on every model (O2).
 
 Forcing a **tool call** with a JSON schema gives structured output more reliably than asking for raw JSON in text.
 
@@ -302,7 +310,7 @@ Any change to prompt wording creates a new folder (`v2/`), never an in-place edi
 
 **Bedrock throttling:** boto3 client with `retries={"mode": "adaptive", "max_attempts": 8}`; Step Functions additionally retries the batch on `Lambda.TooManyRequestsException` and `States.Timeout`.
 
-**Load into Iceberg** (`06_merge_enrichment.sql`): external table `staging.enrichment` over the JSONL, then `MERGE INTO curated.posting_enrichment` on `(refnr, content_hash, prompt_version)` – insert when not matched, update when matched (re-runs overwrite with the latest result).
+**Load into Iceberg** (`src/enrich/sql_values.py`): `INSERT INTO curated.posting_enrichment … SELECT … FROM (VALUES …) WHERE NOT EXISTS` on `(refnr, content_hash, prompt_version)`, so a retried run inserts nothing twice. There is no staging table: the values are built in Python, where every value is either checked against a fixed set (enums, booleans, integers in range) or escaped as a SQL string, and skills must also match `^[a-z0-9][a-z0-9+#./ \-]{0,48}$`. A new prompt version adds rows instead of overwriting, which is what the evaluation in Step 8 compares. The table DDL lives with the other curated tables (`src/curate/sql/ddl/020_posting_enrichment.sql`) and is created by the Curate step.
 
 ### 4.4 Embed Lambda (`stellenradar-dev-embed`)
 
@@ -496,7 +504,7 @@ steps:
 
 ### 4.10 State machine (`statemachine/daily.asl.json`)
 
-> **Implementation status (2026-10-26):** the first slice is live in `infra/modules/orchestration`: **Ingest → Curate → PublishSuccess**, with Retry/Catch to an SNS alert, an EventBridge rule for timeouts/aborts, the 26-hour no-success alarm and the 06:00 Europe/Berlin schedule. Deviation from the table below: the SCD2 statements run in a small **curate Lambda** (`src/curate/`, the code that passed spike S4) instead of Step Functions' native Athena integration – embedding SQL with quotes and `"$path"` in `States.Format` strings would be fragile and would duplicate tested code. The remaining states (RDS/DMS, enrichment, embeddings, matching, dbt dispatch) are added in Weeks 2–3. The definition is generated by Terraform (`jsonencode`), not kept as a separate ASL file.
+> **Implementation status (2026-10-28):** live in `infra/modules/orchestration`: **Ingest → Curate → Enrich → PublishSuccess**, with Retry/Catch to an SNS alert, an EventBridge rule for timeouts/aborts, the 26-hour no-success alarm and the 06:00 Europe/Berlin schedule. Deviation from the table below: the SCD2 statements run in a small **curate Lambda** (`src/curate/`, the code that passed spike S4) instead of Step Functions' native Athena integration – embedding SQL with quotes and `"$path"` in `States.Format` strings would be fragile and would duplicate tested code. `Enrich` is one Lambda task instead of `SelectToEnrich` + Distributed Map + `MergeEnrichment` (§4.3); it returns early when the work list is empty, so no Choice state is needed. The remaining states (RDS/DMS, embeddings, matching, dbt dispatch) are added in Weeks 2–3. The definition is generated by Terraform (`jsonencode`), not kept as a separate ASL file.
 
 | # | State | Type / integration | Notes |
 |---|---|---|---|
@@ -592,7 +600,7 @@ All roles trust only their service principal (or GitHub OIDC); all resource ARNs
 | `db-migrate` | VPC ENI permissions; `rds-db:connect` as `migrator` |
 | `dispatch-dbt` | `secretsmanager:GetSecretValue` on the GitHub token secret only |
 | `digest` | Athena query on workgroup; LF `SELECT` on `marts.top_matches_daily`; `ses:SendEmail` from the verified identity; `s3:*Object` on `digest/sent/*` |
-| `sfn-daily` | `lambda:InvokeFunction` on project functions; Athena + Glue + LF data access for curate/merge; `rds:Start/Stop/DescribeDBInstances` on the instance; `dms:Create/Delete/Describe` on replication instances and tasks tagged `project=stellenradar`, `dms:Start/StopReplicationTask`, `iam:PassRole` for the DMS service roles; `s3:GetObject`/`PutObject` on `cdc/_state/*`; `s3:GetObject` on the Athena results bucket (Map `ItemReader`); `sns:Publish`; `cloudwatch:PutMetricData` |
+| `sfn-daily` | `lambda:InvokeFunction` on project functions; Athena + Glue + LF data access for curate/merge; `rds:Start/Stop/DescribeDBInstances` on the instance; `dms:Create/Delete/Describe` on replication instances and tasks tagged `project=stellenradar`, `dms:Start/StopReplicationTask`, `iam:PassRole` for the DMS service roles; `s3:GetObject`/`PutObject` on `cdc/_state/*`; `sns:Publish`; `cloudwatch:PutMetricData` |
 | `gha-terraform` | Trust: `repo:saravanaprabhu1398-afk/stellenradar:ref:refs/heads/main` (apply) and `:pull_request` (plan, read-only policy) |
 | `gha-dbt` | Trust: workflows running on `main` (covers `repository_dispatch` and `schedule`, which always run on the default branch); Athena, Glue, LF data access on `curated` (read, without `applications.notes`) and `marts` (write); `lambda:InvokeFunction` on digest |
 | `gha-dbt-ci` | Trust: `pull_request`; LF read on `curated` (without `notes`), create/write/drop only in `dev_ci_*` databases; no Lambda invoke |
@@ -653,7 +661,7 @@ Branch protection on `main`: PR required, CI green required, linear history.
 | ID | Item | Resolve in |
 |---|---|---|
 | O1 | ✅ Spike S1 done ([results](spikes/S1-ba-api.md)): search `/pc/v6/jobs`, detail `/pc/v4/jobdetails/{base64}`; field mapping in data model §3 | – |
-| O2 | ✅ Spike S2 done: `EMBED_MODEL_ID = amazon.titan-embed-text-v2:0`, `EXTRACT_MODEL_ID = eu.amazon.nova-lite-v1:0` (development default; final Nova model chosen in Week 2, [ADR-005](decisions/ADR-005-bedrock-models.md)). Confirm forced `toolChoice` works with the chosen Nova model | Week 2 |
+| O2 | ✅ Spike S2 done: `EMBED_MODEL_ID = amazon.titan-embed-text-v2:0`, `EXTRACT_MODEL_ID = eu.amazon.nova-lite-v1:0` (development default; final Nova model chosen in Week 2, [ADR-005](decisions/ADR-005-bedrock-models.md)). Forced tool call uses `toolChoice: {any: {}}` (§4.3) | Week 2 |
 | O3 | CDC resume from checkpoint on a new task/instance, and DMS credential access without endpoints (Spike S3) | Week 2, day 1 |
-| O4 | ✅ SCD2 statements accepted by Athena and idempotent ([spike S4](spikes/S4-athena-scd2.md)). Still open: reading the Athena result CSV with `ItemReader` | Week 2 (enrichment Map) |
+| O4 | ✅ SCD2 statements accepted by Athena and idempotent ([spike S4](spikes/S4-athena-scd2.md)); real changed and disappeared postings confirmed. `ItemReader` no longer needed – enrichment runs in one Lambda (§4.3) | – |
 | O5 | Labelling guide for the 50-posting evaluation set | Test plan |

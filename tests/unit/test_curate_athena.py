@@ -127,3 +127,29 @@ def test_athena_uses_configured_workgroup():
     athena = make_athena(["SUCCEEDED"], workgroup="other")
     athena.run("SELECT 1", "q")
     assert athena.client.workgroups == ["other"]
+
+
+class PagedClient(FakeClient):
+    def __init__(self):
+        super().__init__(["SUCCEEDED"])
+        self.pages = {
+            None: {
+                "ResultSet": {"Rows": [
+                    {"Data": [{"VarCharValue": "refnr"}, {"VarCharValue": "title"}]},
+                    {"Data": [{"VarCharValue": "A"}, {"VarCharValue": "Data Engineer"}]},
+                ]},
+                "NextToken": "t2",
+            },
+            "t2": {"ResultSet": {"Rows": [{"Data": [{"VarCharValue": "B"}, {}]}]}},
+        }  # fmt: skip
+
+    def get_query_results(self, QueryExecutionId, NextToken=None):  # noqa: N803
+        return self.pages[NextToken]
+
+
+def test_athena_rows_follows_pagination_and_maps_nulls():
+    athena = ca.Athena(PagedClient(), sleep=lambda s: None, log=lambda m: None)
+    assert athena.rows("SELECT refnr, title FROM t", "q") == [
+        {"refnr": "A", "title": "Data Engineer"},
+        {"refnr": "B", "title": None},
+    ]

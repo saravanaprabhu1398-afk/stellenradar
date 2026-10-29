@@ -34,11 +34,12 @@ def test_handler_runs_ddl_then_all_scd2_steps(monkeypatch):
 
     assert athena.labels == [
         "010_curated_postings.sql",
+        "020_posting_enrichment.sql",
         "010_close_changed.sql",
         "020_close_disappeared.sql",
         "030_insert_new_versions.sql",
     ]
-    assert "TIMESTAMP '2026-10-27 05:00:01'" in athena.sql[1]
+    assert "TIMESTAMP '2026-10-27 05:00:01'" in athena.sql[2]
     assert result["current_rows"] == 5
 
 

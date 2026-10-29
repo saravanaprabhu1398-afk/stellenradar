@@ -16,6 +16,10 @@ variable "curate_function_arn" {
   type = string
 }
 
+variable "enrich_function_arn" {
+  type = string
+}
+
 variable "schedule_expression" {
   type        = string
   default     = "cron(0 6 * * ? *)"
