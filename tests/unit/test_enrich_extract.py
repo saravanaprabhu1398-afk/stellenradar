@@ -67,6 +67,7 @@ def test_invalid_twice_is_a_dead_letter():
     assert not x.ok
     assert x.attempts == 2
     assert "english_only" in x.problems[0]
+    assert x.last_input["english_only"] == "yes"
 
 
 def test_no_tool_call_is_retried():

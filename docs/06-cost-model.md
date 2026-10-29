@@ -84,7 +84,7 @@ With Nova Lite, volume barely matters. With Nova Pro, the budget breaks above ro
 | Model | Approx. price per 1M in / out | Extraction $ / month | Total | Note |
 |---|---|---|---|---|
 | **Amazon Nova Lite** | ≈ $0.06 / $0.24 | ≈ 0.70 | ≈ 10.05 | Development default (ADR-005) |
-| Amazon Nova 2 Lite | check pricing page | – | – | Week 2 candidate; price to be filled in |
+| Amazon Nova 2 Lite | ≈ $0.30 / $2.50 (unverified for EU) | – | – | Week 2 candidate; cost per 1k postings comes from the evaluation |
 | Amazon Nova Pro | ≈ $0.80 / $3.20 | ≈ 8.80 | ≈ 18.15 | Week 2 candidate if Lite is not accurate enough |
 | Claude Haiku 4.5 (EU profile) | ≈ $1.10 / $5.50 | ≈ 13.00 | ≈ 22.35 | Deferred – needs Marketplace subscription |
 

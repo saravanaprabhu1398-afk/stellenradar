@@ -50,6 +50,9 @@ def errors(fields: Any) -> list[str]:
         if not isinstance(fields.get(name), bool):
             problems.append(f"{name} must be true or false")
 
+    if fields.get("english_only") is True and fields.get("german_level_required") == "fluent":
+        problems.append("english_only cannot be true when german_level_required is fluent")
+
     if fields.get("remote_policy") not in REMOTE | {None}:
         problems.append(f"remote_policy must be one of {sorted(REMOTE)} or null")
 

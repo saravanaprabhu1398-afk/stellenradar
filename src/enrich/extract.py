@@ -21,6 +21,7 @@ class Extraction:
     attempts: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
+    last_input: Any = None  # the model's last tool input, kept for dead-letter diagnosis
 
     @property
     def ok(self) -> bool:
@@ -87,6 +88,7 @@ class Extractor:
                 ]
                 continue
 
+            result.last_input = tool_use["input"]
             result.problems = errors(tool_use["input"])
             if not result.problems:
                 result.fields = normalise(tool_use["input"])

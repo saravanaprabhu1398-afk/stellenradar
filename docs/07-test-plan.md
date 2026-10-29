@@ -23,7 +23,7 @@ flowchart LR
     C --> I["Integration tests<br/>(dev AWS, on demand)"]
     I --> D["Data quality<br/>(dbt tests, every run)"]
     D --> E["End-to-end<br/>(daily run + digest)"]
-    L["LLM evaluation<br/>(eval/score.py, per prompt/model change)"] --> E
+    L["LLM evaluation<br/>(scripts/eval_extraction.py, per prompt/model change)"] --> E
 ```
 
 | Level | What | Tools | When | Gate |
@@ -35,7 +35,7 @@ flowchart LR
 | SQL / dbt | Model compilation and tests on CI schema | `dbt build --target ci` | PRs touching `dbt/` or `sql/` | Must pass |
 | Integration | Real AWS in `dev`: one component against real services | Make targets (`make it-ingest`, `make it-curate`, …) | Before merging a component's first version; after major changes | Checklist in §5 |
 | Data quality | DQ-01 to DQ-10 | dbt tests, Step Functions Choice, metrics | Every daily run | dbt failure blocks the digest |
-| LLM evaluation | Field accuracy on the labelled set | `eval/score.py` | Every prompt or model change | ≥ 90% overall (§4) |
+| LLM evaluation | Field accuracy on the labelled set | `scripts/eval_extraction.py score` | Every prompt or model change | ≥ 90% overall (§4) |
 | End-to-end / acceptance | Full daily run and digest | Scheduled run + checks in §6 | Week 3, 14-day observation | SM-01 to SM-09 |
 
 ## 3. Unit and component test catalogue
@@ -65,12 +65,13 @@ flowchart LR
 |---|---|
 | Size | 50 postings (PRD FR-10) |
 | Selection | Stratified from the first week's data: ~40% German-only, ~20% English ads, ~20% with salary stated, ≥ 5 each of junior/mid, senior, lead+; ≥ 5 each of remote, hybrid, onsite |
-| Split | **35 dev** (prompt iteration) / **15 holdout** (scored only for final results) – guards against tuning the prompt to the test set |
-| Format | `eval/labelled_set.jsonl`: `{refnr, content_hash, text, labels: {9 fields}}`; text anonymised (contact names removed) |
+| Split | **35 dev** (prompt iteration) / **15 holdout** (scored only for final results), assigned deterministically from a hash of `refnr` – guards against tuning the prompt to the test set |
+| Format | `eval/labelled_set.jsonl`: `{refnr, content_hash, labels: {9 fields}, split}` – **no ad text**: scoring reads that exact posting version from `curated.postings`, so no BA content (or contact names) is committed |
+| Workflow | `make eval-sample` (greedy quota sampling over text heuristics and v1 predictions, pre-filled with v1 answers) → label `eval/work/labelling.yaml` (git-ignored) → `make eval-freeze` (validates with the production rules) → `make eval-score` |
 | Labelling guide | `eval/labelling_guide.md`: one rule per field, e.g. "`english_only` = true only if the ad says German is not required or the ad is in English and mentions no German requirement"; "salary = yearly EUR; monthly × 12; ranges as min/max; 'competitive' → null" |
 | Quality check | Re-label 10 postings after 3+ days without looking at earlier labels; disagreements > 5% of fields → clarify the guide and fix labels |
 
-### 4.2 Scoring (`eval/score.py`)
+### 4.2 Scoring (`scripts/eval_extraction.py score`)
 
 | Field type | Fields | Counted correct when |
 |---|---|---|
@@ -150,7 +151,7 @@ Over 5 consecutive digests, I rate each of the 10 matches "would consider applyi
 | `terraform fmt`, `validate`, `tflint`, `plan` | Yes |
 | `checkov` | Yes for new high findings; others reported |
 | `dbt build --target ci` (when `dbt/` or `sql/` changes) | Yes |
-| `eval/score.py` (when `prompts/` or the model ID changes) | Yes – PR must include an updated `docs/evaluation.md` meeting §4.3 |
+| `make eval-score` (when `prompts/` or the model ID changes) | Yes – PR must include an updated `docs/evaluation.md` meeting §4.3 |
 
 ## 9. Schedule
 
