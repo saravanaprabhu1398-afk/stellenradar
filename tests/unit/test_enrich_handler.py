@@ -94,6 +94,7 @@ def test_writes_good_rows_and_dead_letters(monkeypatch):
     assert [r["refnr"] for r in results] == ["a", "b", "c"]
     dead = store.objects["staging/dead_letter/run_id=exec-1/enrich.jsonl.gz"]
     assert dead[0]["refnr"] == "bad1"
+    assert "last_input" in dead[0]
     assert dead[0]["problems"]
 
 

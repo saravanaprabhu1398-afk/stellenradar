@@ -57,3 +57,9 @@ def test_normalise_caps_skills():
 def test_normalise_skill_rejects_unsafe_text():
     assert v.normalise_skill("C++") == "c++"
     assert v.normalise_skill("x'; DROP TABLE t; --") is None
+
+
+def test_english_only_contradicts_fluent_german():
+    assert v.errors({**VALID, "english_only": True, "german_level_required": "fluent"}) == [
+        "english_only cannot be true when german_level_required is fluent"
+    ]

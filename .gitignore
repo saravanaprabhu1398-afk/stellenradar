@@ -59,3 +59,5 @@ ingest-smoke.json
 .coverage
 .pytest_cache/
 .ruff_cache/
+# Evaluation working files (contain BA ad text) – only eval/labelled_set.jsonl is committed
+eval/work/

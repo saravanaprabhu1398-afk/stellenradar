@@ -1,7 +1,7 @@
 # Stellenradar – developer commands (GNU Make 3.81 compatible)
 TF_DIR := infra/envs/dev
 
-.PHONY: help venv lint test run-pipeline athena-ddl curate curate-check spike-s4 tf-fmt tf-init tf-plan tf-apply bootstrap-ci github-setup invoke-ingest-smoke
+.PHONY: help venv lint test eval-sample eval-freeze eval-score run-pipeline athena-ddl curate curate-check spike-s4 tf-fmt tf-init tf-plan tf-apply bootstrap-ci github-setup invoke-ingest-smoke
 
 help:
 	@echo "make venv          Create .venv with Python 3.12 and dev tools"
@@ -13,6 +13,9 @@ help:
 	@echo "make curate RUN_ID=... RUN_DATE=...    SCD2 merge of one ingest run into curated.postings"
 	@echo "make curate-check  Row counts and SCD2 invariants of curated.postings"
 	@echo "make spike-s4 RUN_ID=... RUN_DATE=...  Curate twice and prove the second run changes nothing"
+	@echo "make eval-sample   Pick 50 stratified postings to label -> eval/work/labelling.yaml"
+	@echo "make eval-freeze   Turn the checked labels into eval/labelled_set.jsonl"
+	@echo "make eval-score [CONFIG=model@prompt]  Score models/prompts on the labelled set (calls Bedrock)"
 	@echo "make tf-fmt        Format all Terraform code"
 	@echo "make tf-plan       Init and plan the dev environment locally (writes dev.tfplan)"
 	@echo "make tf-apply      Apply the saved dev.tfplan"
@@ -42,6 +45,15 @@ run-pipeline:
 	aws stepfunctions start-execution \
 	  --state-machine-arn arn:aws:states:eu-central-1:$$(aws sts get-caller-identity --query Account --output text):stateMachine:stellenradar-dev-daily \
 	  --query executionArn --output text
+
+eval-sample:
+	.venv/bin/python scripts/eval_extraction.py sample
+
+eval-freeze:
+	.venv/bin/python scripts/eval_extraction.py freeze
+
+eval-score:
+	.venv/bin/python scripts/eval_extraction.py score $(if $(CONFIG),--config $(CONFIG))
 
 athena-ddl:
 	.venv/bin/python scripts/athena_sql.py ddl

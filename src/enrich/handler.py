@@ -105,7 +105,7 @@ def handler(event: dict, context: Any, athena: Athena | None = None, bedrock: An
         store.put_jsonl_gz(
             f"staging/dead_letter/run_id={run_id}/enrich.jsonl.gz",
             [{"refnr": x.refnr, "content_hash": x.content_hash, "attempts": x.attempts, "problems": x.problems,
-              "prompt_version": prompt_version, "model_id": model_id} for x in dead],
+              "last_input": x.last_input, "prompt_version": prompt_version, "model_id": model_id} for x in dead],
         )  # fmt: skip
 
     stats.update(
