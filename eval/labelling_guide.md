@@ -31,3 +31,19 @@ truncated.
 3. `make eval-freeze` validates the labels (same rules as production) and writes `eval/labelled_set.jsonl`, which holds
    only `refnr`, `content_hash`, labels and the dev/holdout split – no ad text, so it can be committed.
 4. Quality check (test plan §4.1): after 3+ days, re-label 10 postings without looking, and compare.
+
+## Clarifications (added while labelling the first set)
+
+These cases came up in the first 50 postings; they are now the rule.
+
+- **German ad with no language requirement stated** → `german_level_required: fluent`. The working language is German.
+- **"gute Deutschkenntnisse" as a requirement** → `fluent` (professional working level). An explicit "B2" → `basic`, as above.
+- **Ad mixing German and English, requirements in English and no German mentioned** → `none`.
+- **"mindestens 2/3/4 Jahre"** → `mid`; **5+ years** or "Senior" in the title (also "(Senior)") → `senior`; "Lead … / Teamlead" → `lead`;
+  "Principal" (also "Lead Principal", "Senior Principal") → `principal`. "Mehrjährige Erfahrung" alone → `null`.
+- **"Remote Work möglich" with no office days** → `remote`; **"mobiles Arbeiten"/"Homeoffice möglich"** next to an office → `hybrid`.
+- **"mind. 59.000 €"** → min 59000, max null. A tariff group (TVöD, TV-L) without an amount → null; a tariff group *with* an
+  amount range in the ad → that range.
+- **Relocation assistance** in the benefits counts as `visa_sponsorship_mentioned: true`.
+- **Cloud platforms** include ones named only through a service ("Azure Data Factory", "Vertex AI") or as client platforms
+  the role builds on.

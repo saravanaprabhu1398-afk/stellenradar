@@ -69,6 +69,7 @@ flowchart LR
 | Format | `eval/labelled_set.jsonl`: `{refnr, content_hash, labels: {9 fields}, split}` – **no ad text**: scoring reads that exact posting version from `curated.postings`, so no BA content (or contact names) is committed |
 | Workflow | `make eval-sample` (greedy quota sampling over text heuristics and v1 predictions, pre-filled with v1 answers) → `make eval-label` (local browser form on 127.0.0.1, writes `eval/work/labelling.yaml`, git-ignored, after every posting) → `make eval-freeze` (validates with the production rules) → `make eval-score` |
 | Labelling guide | `eval/labelling_guide.md`: one rule per field, e.g. "`english_only` = true only if the ad says German is not required or the ad is in English and mentions no German requirement"; "salary = yearly EUR; monthly × 12; ranges as min/max; 'competitive' → null" |
+| Labeller | Set v1 was labelled by an AI assistant at the owner's request (manual pass lost); provenance and limits in [`evaluation.md`](evaluation.md). The quality check below is then mandatory before results are final. |
 | Quality check | Re-label 10 postings after 3+ days without looking at earlier labels; disagreements > 5% of fields → clarify the guide and fix labels |
 
 ### 4.2 Scoring (`scripts/eval_extraction.py score`)
