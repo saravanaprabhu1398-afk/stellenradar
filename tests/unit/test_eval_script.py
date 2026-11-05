@@ -201,3 +201,56 @@ def test_sample_and_freeze_commands(tmp_path, monkeypatch, capsys):
     assert ev.main(["freeze"]) == 0
     assert len(ev.LABELLED_SET.read_text().splitlines()) == ev.SET_SIZE
     assert "Wrote 50 labelled postings" in capsys.readouterr().out
+
+
+def test_apply_label_validates_before_changing():
+    item = {"refnr": "R1", "checked": False, "skip": False, "labels": {}}
+    assert ev.apply_label(item, {**LABELS, "english_only": True}, skip=False)
+    assert item["checked"] is False
+    assert ev.apply_label(item, {**LABELS, "extra": "dropped"}, skip=False) == []
+    assert item["checked"] is True
+    assert "extra" not in item["labels"]
+    assert ev.apply_label(item, {}, skip=True) == []
+    assert item["skip"] is True
+    assert item["checked"] is False
+
+
+def test_label_server_round_trip(tmp_path):
+    import threading
+    import urllib.error
+    import urllib.request
+
+    path = tmp_path / "labelling.yaml"
+    ev.write_labelling(ev.labelling_items([candidate(1), candidate(2)]), path)
+    server = ev.label_server(port=0, path=path)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+
+    def post(index, body):
+        req = urllib.request.Request(f"{base}/items/{index}", data=json.dumps(body).encode(), method="POST")
+        return urllib.request.urlopen(req)
+
+    try:
+        assert b"Stellenradar labelling" in urllib.request.urlopen(f"{base}/").read()
+        assert len(json.loads(urllib.request.urlopen(f"{base}/items").read())) == 2
+
+        with pytest.raises(urllib.error.HTTPError) as bad:
+            post(0, {"labels": {**LABELS, "salary_max_eur": 960000}})
+        assert bad.value.code == 400
+        assert "salary_max_eur" in json.loads(bad.value.read())["problems"][0]
+
+        assert json.loads(post(0, {"labels": LABELS}).read())["item"]["checked"] is True
+        post(1, {"skip": True})
+        with pytest.raises(urllib.error.HTTPError) as missing:
+            post(5, {"labels": LABELS})
+        assert missing.value.code == 404
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    yaml, _ = ev._yaml()
+    saved = yaml.safe_load(path.read_text())
+    assert saved[0]["checked"] is True
+    assert saved[0]["labels"]["seniority"] == "senior"
+    assert saved[1]["skip"] is True
+    assert not path.with_suffix(".tmp").exists()

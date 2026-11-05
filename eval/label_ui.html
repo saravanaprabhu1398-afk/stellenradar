@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stellenradar labelling</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #667085; --line: #e3e6ec;
+    --accent: #2563eb; --ok: #15803d; --warn: #b45309; --bad: #b91c1c; --mark: #fef08a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111418; --panel: #1a1e24; --text: #e6e8eb; --muted: #9aa3af; --line: #2c323b;
+            --accent: #60a5fa; --ok: #4ade80; --warn: #fbbf24; --bad: #f87171; --mark: #713f12; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+  header { display: flex; gap: 16px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 2; }
+  header h1 { font-size: 15px; margin: 0; }
+  .progress { flex: 1; height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
+  .progress div { height: 100%; background: var(--ok); width: 0; }
+  main { display: grid; grid-template-columns: 220px 1fr 380px; height: calc(100vh - 49px); }
+  nav { overflow-y: auto; border-right: 1px solid var(--line); background: var(--panel); }
+  nav button { display: block; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--line); background: none; color: var(--text); padding: 6px 10px; cursor: pointer; font-size: 12px; }
+  nav button.current { background: color-mix(in srgb, var(--accent) 15%, transparent); }
+  nav .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--line); }
+  nav .done .dot { background: var(--ok); } nav .skip .dot { background: var(--warn); }
+  article { overflow-y: auto; padding: 16px 24px; }
+  article h2 { margin: 0 0 4px; font-size: 18px; }
+  .meta { color: var(--muted); margin-bottom: 12px; }
+  .meta a { color: var(--accent); }
+  .desc { white-space: pre-wrap; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
+  mark { background: var(--mark); color: inherit; border-radius: 2px; }
+  form { overflow-y: auto; border-left: 1px solid var(--line); background: var(--panel); padding: 14px 16px; }
+  fieldset { border: 0; padding: 0; margin: 0 0 14px; }
+  legend, label.title { font-weight: 600; display: block; margin-bottom: 4px; }
+  .hint { color: var(--muted); font-size: 12px; font-weight: 400; }
+  .opts { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+  textarea, input[type=text] { width: 100%; padding: 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+  textarea { height: 110px; }
+  .row { display: flex; gap: 8px; } .row > div { flex: 1; }
+  .buttons { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .buttons button { padding: 8px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--text); cursor: pointer; }
+  .buttons .primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  #status { margin-top: 10px; min-height: 20px; }
+  #status.ok { color: var(--ok); } #status.bad { color: var(--bad); }
+  .badge { font-size: 11px; padding: 1px 6px; border-radius: 10px; background: var(--line); color: var(--muted); }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; height: auto; } nav { max-height: 160px; } form { border-left: 0; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Stellenradar labelling</h1>
+  <div class="progress"><div id="bar"></div></div>
+  <span id="count"></span>
+</header>
+<main>
+  <nav id="list"></nav>
+  <article>
+    <h2 id="title"></h2>
+    <div class="meta"><span id="employer"></span> · <span id="location"></span> · <a id="url" target="_blank" rel="noopener">open on arbeitsagentur.de</a> <span id="state" class="badge"></span></div>
+    <div class="desc" id="desc"></div>
+  </article>
+  <form id="form" autocomplete="off">
+    <fieldset>
+      <label class="title" for="skills">Skills <span class="hint">– comma or newline separated; concrete tools only</span></label>
+      <textarea id="skills"></textarea>
+    </fieldset>
+    <fieldset><legend>Cloud platforms</legend>
+      <div class="opts" id="clouds"></div></fieldset>
+    <fieldset><legend>Seniority <span class="hint">– only explicit signals</span></legend>
+      <div class="opts" id="seniority"></div></fieldset>
+    <fieldset><legend>Salary (yearly gross EUR) <span class="hint">– empty = not stated; monthly × 12</span></legend>
+      <div class="row">
+        <div><input type="text" inputmode="numeric" id="salary_min_eur" placeholder="min, e.g. 65000"></div>
+        <div><input type="text" inputmode="numeric" id="salary_max_eur" placeholder="max"></div>
+      </div></fieldset>
+    <fieldset><legend>German required</legend>
+      <div class="opts" id="german_level_required"></div></fieldset>
+    <fieldset><legend>English only <span class="hint">– ad says German not required / English sufficient</span></legend>
+      <div class="opts" id="english_only"></div></fieldset>
+    <fieldset><legend>Visa / relocation support mentioned</legend>
+      <div class="opts" id="visa_sponsorship_mentioned"></div></fieldset>
+    <fieldset><legend>Remote policy</legend>
+      <div class="opts" id="remote_policy"></div></fieldset>
+    <div class="buttons">
+      <button type="submit" class="primary" title="Ctrl/⌘ + Enter">Save &amp; next</button>
+      <button type="button" id="prev">← Prev</button>
+      <button type="button" id="next">Next →</button>
+      <button type="button" id="skip" title="Only for unreadable or empty ads">Skip (unreadable)</button>
+    </div>
+    <div id="status"></div>
+  </form>
+</main>
+<script>
+const CHOICES = {
+  seniority: [null, "junior", "mid", "senior", "lead", "principal"],
+  german_level_required: ["none", "basic", "fluent"],
+  english_only: [false, true],
+  visa_sponsorship_mentioned: [false, true],
+  remote_policy: [null, "onsite", "hybrid", "remote"],
+};
+const CLOUDS = ["aws", "azure", "gcp"];
+const HIGHLIGHT = /(deutsch\w*|german|englisch\w*|english|fließend|verhandlungssicher|muttersprach\w*|\b[ABC][12]\b|€|\bEUR\b|euro|gehalt|vergütung|salary|brutto|jährlich|monatlich|p\.\s?a\.|per (?:year|month|annum)|remote|home\s?office|hybrid|mobile[sn]? arbeiten|vor ort|on[- ]?site|senior|junior|lead|principal|teamleit\w*|head of|berufseinsteiger|absolvent\w*|\d+\+?\s*(?:jahre|years)|visa|visum|relocation|umzug|aws|amazon web services|azure|gcp|google cloud|bigquery)/gi;
+
+let items = [], current = 0;
+const $ = (id) => document.getElementById(id);
+
+function radios(field, value) {
+  const box = $(field);
+  box.innerHTML = "";
+  for (const option of CHOICES[field]) {
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    input.type = "radio"; input.name = field; input.value = JSON.stringify(option);
+    input.checked = option === value;
+    label.append(input, " " + (option === null ? "not stated" : String(option)));
+    box.append(label);
+  }
+}
+
+function highlighted(text) {
+  const out = document.createDocumentFragment();
+  let last = 0;
+  for (const m of text.matchAll(HIGHLIGHT)) {
+    out.append(text.slice(last, m.index));
+    const mark = document.createElement("mark");
+    mark.textContent = m[0];
+    out.append(mark);
+    last = m.index + m[0].length;
+  }
+  out.append(text.slice(last));
+  return out;
+}
+
+function renderList() {
+  const nav = $("list");
+  nav.innerHTML = "";
+  items.forEach((item, i) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = (item.skip ? "skip" : item.checked ? "done" : "") + (i === current ? " current" : "");
+    const dot = document.createElement("span");
+    dot.className = "dot";
+    b.append(dot, `${i + 1}. ${(item.title || item.refnr).slice(0, 40)}`);
+    b.onclick = () => show(i);
+    nav.append(b);
+  });
+  const done = items.filter((x) => x.checked || x.skip).length;
+  $("count").textContent = `${done} / ${items.length} done`;
+  $("bar").style.width = `${(100 * done) / items.length}%`;
+}
+
+function show(i) {
+  current = Math.max(0, Math.min(items.length - 1, i));
+  const item = items[current], l = item.labels;
+  $("title").textContent = item.title || "(no title)";
+  $("employer").textContent = item.employer || "–";
+  $("location").textContent = item.location || "–";
+  $("url").href = item.url;
+  $("state").textContent = item.skip ? "skipped" : item.checked ? "labelled" : "pre-filled from v1 – check every field";
+  $("desc").replaceChildren(highlighted(item.description || ""));
+  $("desc").parentElement.scrollTop = 0;
+  $("skills").value = (l.skills || []).join(", ");
+  const clouds = $("clouds");
+  clouds.innerHTML = "";
+  for (const c of CLOUDS) {
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    input.type = "checkbox"; input.value = c; input.checked = (l.cloud_platforms || []).includes(c);
+    label.append(input, " " + c);
+    clouds.append(label);
+  }
+  for (const f of Object.keys(CHOICES)) radios(f, l[f]);
+  $("salary_min_eur").value = l.salary_min_eur ?? "";
+  $("salary_max_eur").value = l.salary_max_eur ?? "";
+  status("", "");
+  renderList();
+}
+
+function status(text, kind) { $("status").textContent = text; $("status").className = kind; }
+
+function collect() {
+  const labels = {
+    skills: $("skills").value.split(/[,\n]/).map((s) => s.trim().toLowerCase()).filter(Boolean),
+    cloud_platforms: [...$("clouds").querySelectorAll("input:checked")].map((x) => x.value),
+  };
+  const missing = [];
+  for (const f of Object.keys(CHOICES)) {
+    const picked = document.querySelector(`input[name=${f}]:checked`);
+    if (!picked) missing.push(f);
+    labels[f] = picked ? JSON.parse(picked.value) : null;
+  }
+  for (const f of ["salary_min_eur", "salary_max_eur"]) {
+    const v = $(f).value.replace(/[\s.,€]/g, "").replace(/eur$/i, "");  // "65.000 €" -> 65000
+    labels[f] = v === "" ? null : Number(v);
+    if (v !== "" && !Number.isInteger(labels[f])) missing.push(f + " (not a whole number)");
+  }
+  return { labels, missing };
+}
+
+async function save(skip) {
+  const { labels, missing } = collect();
+  if (!skip && missing.length) return status("Fix: " + missing.join(", "), "bad");
+  const res = await fetch(`/items/${current}`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ labels, skip }),
+  });
+  const body = await res.json();
+  if (!res.ok) return status(body.problems.join(" · "), "bad");
+  items[current] = body.item;
+  const next = items.findIndex((x, i) => i > current && !x.checked && !x.skip);
+  const after = next >= 0 ? next : items.findIndex((x) => !x.checked && !x.skip);
+  if (after >= 0) show(after);
+  else { renderList(); status("All postings done – saved. Run make eval-freeze.", "ok"); }
+}
+
+$("form").onsubmit = (e) => { e.preventDefault(); save(false); };
+$("skip").onclick = () => save(true);
+$("prev").onclick = () => show(current - 1);
+$("next").onclick = () => show(current + 1);
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); save(false); }
+});
+
+fetch("/items").then((r) => r.json()).then((data) => {
+  items = data;
+  const first = items.findIndex((x) => !x.checked && !x.skip);
+  show(first >= 0 ? first : 0);
+});
+</script>
+</body>
+</html>
