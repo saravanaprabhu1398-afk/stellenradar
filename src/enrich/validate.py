@@ -65,11 +65,23 @@ def normalise_skill(skill: str) -> str | None:
     return s if SKILL_PATTERN.match(s) else None
 
 
+NULLABLE = ("seniority", "salary_min_eur", "salary_max_eur", "remote_policy")
+
+
 def normalise(fields: dict) -> dict:
-    """Canonical skills (taxonomy, dedup, max 25) and sorted cloud list; call only on valid fields."""
+    """Canonical skills (taxonomy, dedup, max 25), sorted cloud list, and null for omitted nullable fields.
+
+    Call only on valid fields. Models sometimes leave out a field instead of sending null; errors() treats a missing
+    nullable field as null, so normalise() makes that explicit for everything downstream (SQL insert, scoring).
+    """
     skills: list[str] = []
     for raw in fields["skills"]:
         skill = normalise_skill(raw)
         if skill and skill not in skills:
             skills.append(skill)
-    return {**fields, "skills": skills[:MAX_SKILLS], "cloud_platforms": sorted(set(fields["cloud_platforms"]))}
+    return {
+        **dict.fromkeys(NULLABLE),
+        **fields,
+        "skills": skills[:MAX_SKILLS],
+        "cloud_platforms": sorted(set(fields["cloud_platforms"])),
+    }
