@@ -63,3 +63,12 @@ def test_english_only_contradicts_fluent_german():
     assert v.errors({**VALID, "english_only": True, "german_level_required": "fluent"}) == [
         "english_only cannot be true when german_level_required is fluent"
     ]
+
+
+def test_normalise_fills_omitted_nullable_fields():
+    partial = {
+        k: v for k, v in VALID.items() if k not in ("seniority", "salary_min_eur", "salary_max_eur", "remote_policy")
+    }
+    assert v.errors(partial) == []
+    out = v.normalise(partial)
+    assert all(out[f] is None for f in ("seniority", "salary_min_eur", "salary_max_eur", "remote_policy"))

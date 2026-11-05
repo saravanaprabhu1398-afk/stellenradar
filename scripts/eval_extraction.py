@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from curate.athena import DB_CURATED, Athena  # noqa: E402
-from enrich.extract import Extractor  # noqa: E402
+from enrich.extract import Extraction, Extractor  # noqa: E402
 from enrich.validate import errors, normalise_skill  # noqa: E402
 
 WORK = ROOT / "eval" / "work"
@@ -384,13 +384,19 @@ def evaluate(extractor: Extractor, labelled: list[dict], texts: dict, workers: i
         posting = {**texts[(row["refnr"], row["content_hash"])], "refnr": row["refnr"],
                    "content_hash": row["content_hash"]}  # fmt: skip
         start = time.monotonic()
-        x = extractor.extract(posting)
+        error = None
+        try:
+            x = extractor.extract(posting)
+        except Exception as exc:  # noqa: BLE001 – one failing posting counts as invalid, it must not abort the config
+            error = f"{type(exc).__name__}: {exc}"
+            x = Extraction(row["refnr"], row["content_hash"], problems=[error])
         predicted = canonical(x.fields) if x.ok else None
         expected = canonical(row["labels"])
         return {
             "refnr": row["refnr"], "split": row["split"], "predicted": predicted, "expected": expected,
             "judged": judge(predicted, expected), "problems": x.problems, "last_input": x.last_input,
             "input_tokens": x.input_tokens, "output_tokens": x.output_tokens, "seconds": time.monotonic() - start,
+            "error": error,
         }  # fmt: skip
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -523,6 +529,9 @@ def main(argv: list[str] | None = None, athena: Athena | None = None, bedrock=No
             results = evaluate(Extractor(bedrock, model_id, prompt), labelled, texts)
         except Exception as exc:  # noqa: BLE001 – e.g. model not enabled; report and continue with the next config
             failed[config] = f"{type(exc).__name__}: {exc}"
+            continue
+        if all(r["error"] for r in results):  # e.g. model not enabled: report it instead of a 0 % row
+            failed[config] = results[0]["error"]
             continue
         summaries.append(summarise(config, model_id, results))
         details[config] = results

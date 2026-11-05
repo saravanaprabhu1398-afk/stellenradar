@@ -136,7 +136,11 @@ class FakeBedrock:
             raise RuntimeError("AccessDeniedException: model not enabled")
         text = messages[0]["content"][0]["text"]
         row = next(r for key, r in self.by_text.items() if key in text)
-        answer = dict(row["labels"])
+        if row["refnr"].endswith("8"):
+            raise RuntimeError("ThrottlingException")  # one posting fails, the config still scores
+        answer = {k: v for k, v in row["labels"].items() if k != "remote_policy" or v is not None}
+        if row["refnr"].endswith("7"):
+            answer.pop("salary_min_eur")  # omitted nullable field must not crash scoring
         if row["refnr"].endswith("9"):
             answer["seniority"] = "rockstar"
         return {"output": {"message": {"content": [{"toolUse": {"toolUseId": "t", "input": answer}}]}},
@@ -162,17 +166,19 @@ def test_score_end_to_end(tmp_path, monkeypatch, capsys):
     assert ev.main(["score", "--config", "eu.amazon.nova-lite-v1:0@v2", "--config", "eu.amazon.nova-pro-v1:0@v2"],
                    athena=athena, bedrock=bedrock) == 0  # fmt: skip
     out = capsys.readouterr().out
-    assert "| `eu.amazon.nova-lite-v1:0@v2` | 90% |" in out  # 2 of 20 dead-lettered
+    # 4 of 20 invalid (2 bad answers, 2 exceptions); 2 omitted salary_min_eur are read as null (expected 70000)
+    assert "| `eu.amazon.nova-lite-v1:0@v2` | 79% |" in out
     assert "FAIL" in out
-    assert "2 invalid after retry" in out
+    assert "4 invalid after retry" in out
+    assert "salary_min_eur 70% < 75%" in out
     assert "`eu.amazon.nova-pro-v1:0@v2` not run: RuntimeError" in out
     assert "IN ('R00', 'R01'" in athena.sql[0]
     reports = list((tmp_path / "work").glob("report-*.md"))
     assert len(reports) == 1
     saved = json.loads(next((tmp_path / "work").glob("results-*.json")).read_text())
     summary = saved["summaries"][0]
-    assert summary["dead_letters"] == 2
-    assert summary["cost_per_1k_usd"] == pytest.approx((2000 * 0.06 + 150 * 0.24) / 1e6 * 1000 * 1.1, rel=0.01)
+    assert summary["dead_letters"] == 4
+    assert summary["cost_per_1k_usd"] == pytest.approx((2000 * 0.06 + 150 * 0.24) / 1e6 * 1000, rel=0.01)
 
 
 def test_score_reports_missing_versions(tmp_path, monkeypatch, capsys):
