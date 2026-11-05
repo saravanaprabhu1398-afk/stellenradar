@@ -3,11 +3,13 @@
 Label what the **advertisement states**, not what you would infer about the employer. When unsure, re-read the rule
 here; if the rule does not settle it, add a line to this guide so the next posting gets the same answer.
 
-The file `eval/work/labelling.yaml` is pre-filled with prompt v1's answers to save typing. **Check every field against
-the ad** – v1 is often wrong, and an unchecked pre-fill makes v1 look better than it is. When a posting is done, set
-`checked: true`. Set `skip: true` only if the text is unreadable or empty (a non-data job is still a valid posting).
-
-The full ad is in `description`; `url` opens it on the Arbeitsagentur site if the text looks truncated.
+Label in the browser with `make eval-label`: one ad at a time, with language, salary, seniority, remote and cloud
+terms highlighted, and the 9 fields as a form. **Every "Save & next" is written to `eval/work/labelling.yaml`
+immediately**, so you can stop (Ctrl+C) and continue later. The form is checked with the production rules before
+saving. Fields are pre-filled with prompt v1's answers where v1 has run – **check every field against the ad**; v1 is
+often wrong, and an unchecked pre-fill makes v1 look better than it is. Use "Skip" only if the text is unreadable or
+empty (a non-data job is still a valid posting). The link opens the ad on the Arbeitsagentur site if the text looks
+truncated.
 
 ## Fields
 
@@ -25,7 +27,7 @@ The full ad is in `description`; `url` opens it on the Arbeitsagentur site if th
 ## Process
 
 1. `make eval-sample` once – it refuses to overwrite an existing file (your labels) unless forced.
-2. Label in any editor; save often. 50 postings take about 30–45 minutes.
+2. `make eval-label` – 50 postings take about 30–45 minutes. Progress is saved after every posting.
 3. `make eval-freeze` validates the labels (same rules as production) and writes `eval/labelled_set.jsonl`, which holds
    only `refnr`, `content_hash`, labels and the dev/holdout split – no ad text, so it can be committed.
 4. Quality check (test plan §4.1): after 3+ days, re-label 10 postings without looking, and compare.

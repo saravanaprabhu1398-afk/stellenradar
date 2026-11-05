@@ -1,7 +1,7 @@
 """Evaluate field extraction against a hand-labelled set (test plan §4).
 
     python scripts/eval_extraction.py sample              # 50 stratified postings -> eval/work/labelling.yaml
-    # label them by hand (eval/labelling_guide.md), set checked: true on each
+    python scripts/eval_extraction.py label               # label them in the browser (saves after every posting)
     python scripts/eval_extraction.py freeze              # -> eval/labelled_set.jsonl (labels only, committed)
     python scripts/eval_extraction.py score [--config MODEL@PROMPT ...]   # -> eval/work/report-<ts>.md
 
@@ -18,6 +18,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,6 +31,7 @@ from enrich.validate import errors, normalise_skill  # noqa: E402
 WORK = ROOT / "eval" / "work"
 LABELLING = WORK / "labelling.yaml"
 LABELLED_SET = ROOT / "eval" / "labelled_set.jsonl"
+LABEL_UI = ROOT / "eval" / "label_ui.html"
 SET_SIZE = 50
 HOLDOUT = 15
 SEED = 20261029
@@ -183,7 +185,67 @@ def write_labelling(items: list[dict], path: Path | None = None) -> None:
         "# Label each posting with eval/labelling_guide.md. Labels are pre-filled from prompt v1 – check every\n"
         "# field against the ad, fix it, then set checked: true. Set skip: true only for unreadable ads.\n"
     )
-    path.write_text(header + yaml.dump(items, Dumper=dumper, allow_unicode=True, sort_keys=False, width=120))
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(header + yaml.dump(items, Dumper=dumper, allow_unicode=True, sort_keys=False, width=120))
+    tmp.replace(path)  # atomic: a crash mid-write never leaves a half-written labelling file
+
+
+# ---------- label (local browser UI) ----------
+
+
+def apply_label(item: dict, labels: dict, skip: bool) -> list[str]:
+    """Update one labelling item in place; returns validation problems (nothing is changed if there are any)."""
+    if skip:
+        item.update(skip=True, checked=False)
+        return []
+    problems = errors(labels)
+    if not problems:
+        item.update(labels={f: labels[f] for f in FIELDS}, checked=True, skip=False)
+    return problems
+
+
+def label_server(port: int = 8765, path: Path | None = None) -> HTTPServer:
+    """HTTP server on 127.0.0.1 only: serves eval/label_ui.html and writes every saved posting to the YAML file."""
+    path = path or LABELLING
+    yaml, _ = _yaml()
+    items = yaml.safe_load(path.read_text())
+    page = LABEL_UI.read_bytes()
+
+    class Handler(BaseHTTPRequestHandler):
+        def _send(self, status: int, body: bytes, content_type: str = "application/json") -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _json(self, status: int, obj) -> None:
+            self._send(status, json.dumps(obj, ensure_ascii=False).encode())
+
+        def do_GET(self):  # noqa: N802 – http.server naming
+            if self.path == "/":
+                self._send(200, page, "text/html; charset=utf-8")
+            elif self.path == "/items":
+                self._json(200, items)
+            else:
+                self._json(404, {"problems": ["not found"]})
+
+        def do_POST(self):  # noqa: N802
+            match = re.fullmatch(r"/items/(\d+)", self.path)
+            if not match or int(match.group(1)) >= len(items):
+                return self._json(404, {"problems": ["unknown posting"]})
+            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
+            item = items[int(match.group(1))]
+            problems = apply_label(item, body.get("labels") or {}, bool(body.get("skip")))
+            if problems:
+                return self._json(400, {"problems": problems})
+            write_labelling(items, path)
+            self._json(200, {"item": item})
+
+        def log_message(self, *args) -> None:  # keep the terminal quiet
+            pass
+
+    return HTTPServer(("127.0.0.1", port), Handler)
 
 
 # ---------- freeze ----------
@@ -388,10 +450,29 @@ def fetch_texts(athena: Athena, labelled: list[dict]) -> dict:
 
 def main(argv: list[str] | None = None, athena: Athena | None = None, bedrock=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=["sample", "freeze", "score"])
+    parser.add_argument("command", choices=["sample", "label", "freeze", "score"])
+    parser.add_argument("--port", type=int, default=8765, help="label: local port for the labelling page")
     parser.add_argument("--config", action="append", help="MODEL_ID@PROMPT_VERSION (repeatable)")
     parser.add_argument("--force", action="store_true", help="sample: overwrite an existing labelling file")
     args = parser.parse_args(argv)
+
+    if args.command == "label":
+        if not LABELLING.exists():
+            print("No labelling file yet – run sample first.")
+            return 1
+        server = label_server(args.port)
+        url = f"http://127.0.0.1:{server.server_address[1]}/"
+        print(f"Labelling page: {url}  (every save is written to {LABELLING.relative_to(ROOT)}; Ctrl+C to stop)")
+        import webbrowser
+
+        webbrowser.open(url)
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            print("\nStopped. Run freeze when all postings are done.")
+        finally:
+            server.server_close()
+        return 0
 
     if args.command == "freeze":
         yaml, _ = _yaml()
