@@ -46,10 +46,9 @@ SET_F1_CORRECT = 0.8
 SALARY_TOLERANCE = 0.05
 
 DEFAULT_CONFIGS = (
-    "eu.amazon.nova-lite-v1:0@v1",
-    "eu.amazon.nova-lite-v1:0@v2",
-    "eu.amazon.nova-2-lite-v1:0@v2",
+    "eu.amazon.nova-pro-v1:0@v3",
     "eu.amazon.nova-pro-v1:0@v2",
+    "eu.amazon.nova-2-lite-v1:0@v3",
 )
 # USD per 1M input / output tokens. Approximate list prices – check the Bedrock pricing page for the EU profiles.
 PRICES = {

@@ -81,3 +81,35 @@ def test_no_tool_call_is_retried():
 def test_long_description_is_truncated():
     msg = Extractor(FakeBedrock([]), "model").user_message({**POSTING, "description": "x" * 50_000})
     assert msg.count("x") <= MAX_DESCRIPTION_CHARS + 5
+
+
+def test_invented_salary_is_sent_back_then_fixed():
+    invented = {**FIELDS, "salary_min_eur": 100000, "salary_max_eur": 100000}
+    client = FakeBedrock([tool_response(invented), tool_response(FIELDS)])
+    x = Extractor(client, "model").extract(POSTING)
+    assert x.ok
+    assert x.attempts == 2
+    assert x.fields["salary_min_eur"] is None
+    retry = client.calls[1]["messages"][-1]["content"][0]["toolResult"]["content"][0]["text"]
+    assert "salary_min_eur=100000 does not appear" in retry
+
+
+def test_salary_invented_twice_is_nulled_not_dead_lettered():
+    invented = {**FIELDS, "salary_min_eur": 100000, "salary_max_eur": None, "seniority": "senior"}
+    x = Extractor(FakeBedrock([tool_response(invented), tool_response(invented)]), "model").extract(POSTING)
+    assert x.ok
+    assert x.fields["salary_min_eur"] is None
+    assert x.fields["seniority"] == "senior"
+    assert x.problems[0].startswith("salary_min_eur=100000")
+
+
+def test_stated_salary_is_kept():
+    posting = {**POSTING, "description": "Python, AWS. Gehalt 65.000 - 80.000 € p.a."}
+    stated = {**FIELDS, "salary_min_eur": 65000, "salary_max_eur": 80000}
+    x = Extractor(FakeBedrock([tool_response(stated)]), "model").extract(posting)
+    assert x.attempts == 1
+    assert (x.fields["salary_min_eur"], x.fields["salary_max_eur"]) == (65000, 80000)
+
+
+def test_prompt_v3_loads():
+    assert "english_only is true ONLY" in Extractor(FakeBedrock([]), "model", "v3").system

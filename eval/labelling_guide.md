@@ -41,9 +41,10 @@ These cases came up in the first 50 postings; they are now the rule.
 - **Ad mixing German and English, requirements in English and no German mentioned** → `none`.
 - **"mindestens 2/3/4 Jahre"** → `mid`; **5+ years** or "Senior" in the title (also "(Senior)") → `senior`; "Lead … / Teamlead" → `lead`;
   "Principal" (also "Lead Principal", "Senior Principal") → `principal`. "Mehrjährige Erfahrung" alone → `null`.
-- **"Remote Work möglich" with no office days** → `remote`; **"mobiles Arbeiten"/"Homeoffice möglich"** next to an office → `hybrid`.
+- **`remote`** only for fully remote / 100 % / remote-first or "Remote" as the job's location. **"Remote Work möglich", "mobiles Arbeiten", "Homeoffice möglich"** next to an office or customer sites → `hybrid` (corrected 2026-11-09, see `docs/evaluation.md`).
 - **"mind. 59.000 €"** → min 59000, max null. A tariff group (TVöD, TV-L) without an amount → null; a tariff group *with* an
   amount range in the ad → that range.
 - **Relocation assistance** in the benefits counts as `visa_sponsorship_mentioned: true`.
+- **Title with two levels** ("Principal Architect / Lead") → the higher one.
 - **Cloud platforms** include ones named only through a service ("Azure Data Factory", "Vertex AI") or as client platforms
   the role builds on.

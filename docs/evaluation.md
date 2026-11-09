@@ -40,19 +40,19 @@ postings to sample from, most of them enriched).
 | `eu.amazon.nova-lite-v1:0@v1` (production today) | 69% | 64% | 81% | 0.53 | 21% | 3 | 2275 / 149 | 1.1 | 0.17 | FAIL |
 | `eu.amazon.nova-lite-v1:0@v2` | 59% | 55% | 69% | 0.58 | 77% | 3 | 2559 / 130 | 3.4 | 0.18 | FAIL |
 | `eu.amazon.nova-2-lite-v1:0@v2` | **78%** | 77% | 79% | **0.71** | **0%** | **0** | 2829 / 162 | 1.3 | 1.25 | FAIL |
-| `eu.amazon.nova-pro-v1:0@v2` | – | – | – | – | – | – | – | – | – | not run (scoring bug, fixed) |
+| `eu.amazon.nova-pro-v1:0@v2` (run 12:15 UTC, after the fix) | **82%** | 81% | 84% | 0.64 | 8% | 0 | 2478 / 106 | 1.2 | 2.32 | FAIL |
 
-| Field | Nova Lite v1 | Nova Lite v2 | Nova 2 Lite v2 |
-|---|---|---|---|
-| skills (F1 ≥ 0.8) | 22% | 24% | 30% |
-| cloud_platforms | 84% | 84% | 98% |
-| seniority | 46% | 64% | 56% |
-| salary_min_eur | 74% | 20% | 96% |
-| salary_max_eur | 72% | 18% | 100% |
-| german_level_required | 80% | 78% | 84% |
-| english_only | 72% | 74% | 86% |
-| visa_sponsorship_mentioned | 90% | 90% | 100% |
-| remote_policy | 84% | 80% | 52% |
+| Field | Nova Lite v1 | Nova Lite v2 | Nova 2 Lite v2 | Nova Pro v2 |
+|---|---|---|---|---|
+| skills (F1 ≥ 0.8) | 22% | 24% | 30% | 18% |
+| cloud_platforms | 84% | 84% | 98% | 94% |
+| seniority | 46% | 64% | 56% | 88% |
+| salary_min_eur | 74% | 20% | 96% | 94% |
+| salary_max_eur | 72% | 18% | 100% | 90% |
+| german_level_required | 80% | 78% | 84% | 88% |
+| english_only | 72% | 74% | 86% | 76% |
+| visa_sponsorship_mentioned | 90% | 90% | 100% | 100% |
+| remote_policy | 84% | 80% | 52% | 88% |
 
 **Reading:**
 - **No config passes the gate.**
@@ -60,3 +60,41 @@ postings to sample from, most of them enriched).
 - **Prompt v2 hurts Nova Lite.** Salary hallucination goes from 21% to 77%: the smaller model copies the example amounts from the salary rules.
 - **The remaining gaps** are skills (the per-posting F1 ≥ 0.8 rule is strict for open lists), seniority and remote policy (52% for Nova 2 Lite). Some of these may be label-rule disagreements rather than model errors (e.g. "Remote Work möglich" labelled `remote`). They are reviewed on the **dev split only** before prompt v3, so the holdout stays clean.
 - **Nova Pro was not scored:** the model omitted a nullable field, which crashed scoring. Fixed – omitted nullable fields now read as null (also in production), and a failing posting counts as invalid instead of aborting the config.
+
+### Error analysis of the first run (dev split; holdout rows were listed but not used for changes)
+
+- **Invented salaries.** All 4 of Nova Pro's are absent from the ad text:
+  - 100,000 from "€3M–5M deals";
+  - 142,500 from "14,25 Gehälter";
+  - 400,000 twice, the top of the allowed range.
+
+  A deterministic check, `validate.ungrounded_salaries`, accepts a salary only if it matches an amount in the ad (as stated, × 12, or "65k"). On the stored outputs it would have caught all 20 invented values of Nova Lite v1, 73 of Nova Lite v2 and 7 of Nova Pro's 8 wrong values. It rejects none of the labelled salaries. The 8th Pro value is "mind. 59.000 €" read as min = max, which is a prompt rule.
+- **Nova 2 Lite ignores two prompt rules systematically:**
+  - it answers `onsite` when the ad says nothing (22 of 24 remote misses);
+  - it answers `mid` without a seniority signal (19 of 22 seniority misses).
+
+  Nova Pro does neither.
+- **Nova Pro's remaining misses** are mostly borderline: "erfahrener Engineer" read as senior, and a title naming two levels.
+- **`english_only`:** all 12 of Nova Pro's misses are English-language ads that never mention German. The labels keep the stricter rule: only an explicit statement counts, while "no German mentioned" is already `german_level_required: none`. Prompt v3 states this.
+- **Skills:** the overall overlap is 0.64, but only 18% of postings reach F1 ≥ 0.8. Differences are mostly granularity ("transformer" vs "transformers", "catia" vs "catia v5") and generic terms ("ai", "governance"). The per-posting threshold was set before any data. It will be recalibrated against human-vs-labeller skill agreement from the owner's 10-posting check, since that agreement is the ceiling for any model.
+
+### Label corrections
+
+| Date | Posting | Field | Old → new | Reason |
+|---|---|---|---|---|
+| 2026-11-09 | 19913-3000711792188001-S (dev) | remote_policy | remote → hybrid | "Remote Work sowie mobiles Arbeiten möglich" for a consulting role with customer travel; the guide rule was wrong (now: remote only when fully remote) |
+| 2026-11-09 | 19913-3082281792620000-S (dev) | remote_policy | remote → hybrid | same wording and role type |
+
+### Changes for the next run
+
+- **Prompt v3:**
+  - "mind./ab" → min only;
+  - salary non-amounts listed (bonuses, deal volumes, "14,25 Gehälter");
+  - seniority without a number → null, and the higher of two title levels;
+  - a German-language ad with no language requirement → fluent;
+  - stricter `english_only`;
+  - "Remote Work möglich" → hybrid, and never assume onsite;
+  - cloud only when named;
+  - more generic non-skills.
+- **Salary guard** in the extractor for every model: an ungrounded salary is sent back once, then set to null. The posting is not lost.
+- **Taxonomy:** variants seen in this run ("transformer", "nix/nixos", "tls/ssl", …).
