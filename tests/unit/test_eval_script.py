@@ -159,7 +159,7 @@ def test_score_end_to_end(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(ev, "LABELLED_SET", tmp_path / "labelled_set.jsonl")
     ev.LABELLED_SET.write_text("".join(json.dumps(r) + "\n" for r in rows))
     texts = [{"refnr": r["refnr"], "content_hash": "h", "title": "t", "employer": "e", "location": "l",
-              "description": f"Ad {r['refnr']}"} for r in rows]  # fmt: skip
+              "description": f"Ad {r['refnr']}. Gehalt 70.000 - 80.000 €"} for r in rows]  # fmt: skip
     athena = FakeAthena(texts)
     bedrock = FakeBedrock(rows, fail_models=("eu.amazon.nova-pro-v1:0",))
 

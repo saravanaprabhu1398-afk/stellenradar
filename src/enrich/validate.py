@@ -59,6 +59,42 @@ def errors(fields: Any) -> list[str]:
     return problems
 
 
+# "59.000", "70,000", "65 000" (thousands separators), "4.500", "65k", "14,25"
+_AMOUNT = re.compile(
+    r"(?<![\d.,])(\d{1,3}(?:[.,\s]\d{3})+|\d+(?:[.,]\d{1,2})?)\s*(k\b|tsd\b|tausend\b)?", re.IGNORECASE
+)
+SALARY_TOLERANCE = 0.01
+
+
+def salary_amounts(text: str) -> set[int]:
+    """Every yearly amount the text can support: each number as stated, × 12 (monthly) and × 1000 for "65k"."""
+    amounts = set()
+    for raw, thousands in _AMOUNT.findall(text):
+        digits = re.sub(r"[.,\s](?=\d{3}(?!\d))", "", raw).replace(",", ".")
+        try:
+            value = float(digits)
+        except ValueError:
+            continue
+        if thousands:
+            value *= 1000
+        amounts.update({round(value), round(value * 12)})
+    return amounts
+
+
+def ungrounded_salaries(fields: dict, text: str) -> list[str]:
+    """Salary values that do not come from any amount in the ad – the model invented or mis-derived them."""
+    amounts = salary_amounts(text)
+    problems = []
+    for name in ("salary_min_eur", "salary_max_eur"):
+        value = fields.get(name)
+        if _is_int(value) and not any(abs(value - a) <= SALARY_TOLERANCE * value for a in amounts):
+            problems.append(
+                f"{name}={value} does not appear in the advertisement as a yearly amount or a monthly amount × 12; "
+                "use null unless the ad states a salary for this job"
+            )
+    return problems
+
+
 def normalise_skill(skill: str) -> str | None:
     s = re.sub(r"\s+", " ", skill.strip().lower())
     s = TAXONOMY.get(s, s)

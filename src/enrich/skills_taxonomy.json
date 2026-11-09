@@ -81,5 +81,19 @@
   "websphere mq": "mq",
   "google workplace": "google workspace",
   "microservice": "microservices",
-  "microservices architecture": "microservices"
+  "microservices architecture": "microservices",
+  "transformer": "transformers",
+  "nix/nixos": "nixos",
+  "nix": "nixos",
+  "continuous integration": "ci/cd",
+  "container architectures": "containers",
+  "container": "containers",
+  "learning management system": "lms",
+  "spice-simulation": "spice",
+  "spice simulation": "spice",
+  "emc design": "emc",
+  "tls/ssl": "tls",
+  "ssl/tls": "tls",
+  "odk": "ontology development kit",
+  "kryptographie": "cryptography"
 }

@@ -72,3 +72,18 @@ def test_normalise_fills_omitted_nullable_fields():
     assert v.errors(partial) == []
     out = v.normalise(partial)
     assert all(out[f] is None for f in ("seniority", "salary_min_eur", "salary_max_eur", "remote_policy"))
+
+
+def test_salary_amounts_cover_yearly_monthly_and_k():
+    amounts = v.salary_amounts("ab 59.000 € p.a., oder 4.500 € monatlich, bis 70,000 EUR, 65k, 14,25 Gehälter")
+    assert {59000, 54000, 70000, 65000} <= amounts
+    assert 142500 not in amounts
+
+
+def test_ungrounded_salaries():
+    text = "Gehalt: 60.000 - 74.000 € brutto. Deals von €3M–5M."
+    ok = {"salary_min_eur": 60000, "salary_max_eur": 74000}
+    assert v.ungrounded_salaries(ok, text) == []
+    invented = v.ungrounded_salaries({"salary_min_eur": 100000, "salary_max_eur": None}, text)
+    assert len(invented) == 1
+    assert invented[0].startswith("salary_min_eur=100000")
