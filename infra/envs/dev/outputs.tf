@@ -32,3 +32,11 @@ output "curate_function_name" {
 output "state_machine_arn" {
   value = module.orchestration.state_machine_arn
 }
+
+output "db_identifier" {
+  value = module.database.identifier
+}
+
+output "db_address" {
+  value = module.database.address
+}

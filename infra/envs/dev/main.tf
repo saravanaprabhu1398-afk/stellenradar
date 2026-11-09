@@ -256,3 +256,67 @@ module "orchestration" {
   curate_function_arn = module.curate.function_arn
   enrich_function_arn = module.enrich.function_arn
 }
+
+# ---------- Database: private network, RDS PostgreSQL + pgvector, migrations (SDD §4.6, §5.2–5.3) ----------
+
+module "network" {
+  source      = "../../modules/network"
+  name_prefix = local.name_prefix
+}
+
+module "database" {
+  source            = "../../modules/database"
+  name_prefix       = local.name_prefix
+  subnet_ids        = module.network.private_subnet_ids
+  security_group_id = module.network.security_group_ids["rds"]
+}
+
+# Pure-Python PostgreSQL driver, built from hashed wheels by `python scripts/build_layer.py db` (make layers / CI).
+data "archive_file" "db_layer" {
+  type        = "zip"
+  source_dir  = "${path.root}/.build/layers/db"
+  output_path = "${path.root}/.build/db-layer.zip"
+}
+
+resource "aws_lambda_layer_version" "db" {
+  layer_name               = "${local.name_prefix}-db"
+  description              = "pg8000 and dependencies (layers/db/requirements.txt)"
+  filename                 = data.archive_file.db_layer.output_path
+  source_code_hash         = data.archive_file.db_layer.output_base64sha256
+  compatible_runtimes      = ["python3.12"]
+  compatible_architectures = ["arm64"]
+}
+
+locals {
+  rds_db_user = "arn:aws:rds-db:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:dbuser:${module.database.resource_id}"
+}
+
+data "aws_iam_policy_document" "db_migrate" {
+  statement {
+    sid       = "ConnectAsMigrator"
+    actions   = ["rds-db:connect"]
+    resources = ["${local.rds_db_user}/migrator"]
+  }
+}
+
+module "db_migrate" {
+  source             = "../../modules/lambda_function"
+  name               = "${local.name_prefix}-db-migrate"
+  description        = "Database bootstrap, migrations and tracker maintenance inside the VPC (SDD 4.6)"
+  handler            = "db_migrate.handler.handler"
+  source_root        = "${path.root}/../../../src"
+  packages           = ["common", "db", "db_migrate"]
+  memory_mb          = 256
+  timeout_s          = 120
+  policy_json        = data.aws_iam_policy_document.db_migrate.json
+  subnet_ids         = module.network.private_subnet_ids
+  security_group_ids = [module.network.security_group_ids["migrate"]]
+  layers             = [aws_lambda_layer_version.db.arn]
+
+  environment = {
+    DB_HOST     = module.database.address
+    DB_PORT     = tostring(module.database.port)
+    DB_NAME     = "stellenradar"
+    MASTER_USER = "stellenradar_admin"
+  }
+}
