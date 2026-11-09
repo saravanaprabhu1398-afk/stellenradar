@@ -375,7 +375,15 @@ Hard filters and the final ranking happen in dbt (§4.8), where enrichment field
 - The operator invokes the function with `{"mode": "bootstrap"}` and the master password (read from Secrets Manager on the operator's machine) in the payload. The handler never logs the event. This is the only time a password is passed to application code – a documented trade-off to avoid a Secrets Manager endpoint (ADR-003).
 - Bootstrap SQL: `CREATE EXTENSION vector;` create roles `migrator` (owns schemas, `rds_iam`), `match_app` (`rds_iam`), `dms_user` (`rds_replication`, password = value from Secrets Manager); create schemas `tracker` and `vec`; create the persistent logical replication slot: `SELECT pg_create_logical_replication_slot('stellenradar_dms', 'test_decoding');`
 
-**Normal mode** (every run, as a Step Functions step): connect as `migrator` with IAM auth, apply `src/db_migrate/migrations/NNN_*.sql` not yet recorded in `public.schema_migrations`, each in a transaction.
+**Normal mode** (every run, as a Step Functions step): connect as `migrator` with IAM auth, apply `src/db_migrate/migrations/NNN_*.sql` not yet recorded in `meta.schema_migrations`, each in a transaction.
+
+> **Implementation status (2026-11-09, Step 9a):** live in `src/db_migrate/` and `infra/modules/{network,database}`.
+> - **Modes:** `bootstrap`, `migrate`, `status`, `tracker_upsert`, `tracker_list`. Operators call them through `scripts/db_admin.py` (`make db-*`, `make tracker-*`).
+> - **Migration ledger:** `meta.schema_migrations`, in a `migrator`-owned schema, because PostgreSQL 15+ no longer lets other roles create objects in `public`. Each entry stores a checksum, so an edited, already-applied migration is refused.
+> - **Bootstrap:** grants `rds_iam`, and grants `migrator` to the master user so it can create `migrator`-owned schemas and default privileges. `match_app` gets read/write on `vec` and read-only on `tracker`.
+> - **Deferred to Step 9b (DMS):** `dms_user` and the replication slot, which depend on spike S3.
+> - **Driver:** `pg8000` ships as a Lambda layer built from hash-pinned wheels (`layers/db/requirements.txt`, `scripts/build_layer.py`). The RDS CA bundle is packaged in `src/db/`.
+> - **Verification:** bootstrap, migrations, tracker writes and role permissions were tested against a real PostgreSQL 16 with pgvector (`tests/integration/`, run with `PG_TEST_HOST`).
 
 **Tracker schema** (`001_tracker.sql`):
 
@@ -585,6 +593,7 @@ Execution timeout: 2 hours. Execution history retained 90 days.
 | Parameters | `rds.logical_replication = 1`, `max_slot_wal_keep_size = 2048` (MB). Caps WAL kept for an idle slot; if exceeded, the slot is invalidated and DMS must redo the full load – acceptable because the tracker is tiny |
 | Credentials | `manage_master_user_password = true` (RDS-managed secret) |
 | Backups | 1-day retention, no final snapshot in dev, `deletion_protection = false` |
+| Cost safety net | EventBridge Scheduler calls `rds:StopDBInstance` every night at 22:00 Europe/Berlin, because AWS restarts a stopped instance after 7 days. The daily pipeline will start and stop it around its run. |
 | Encryption | Storage encrypted with the AWS-managed key |
 
 ### 5.4 IAM – role matrix

@@ -47,3 +47,19 @@ variable "log_retention_days" {
   type    = number
   default = 30
 }
+
+variable "subnet_ids" {
+  type        = list(string)
+  default     = []
+  description = "Private subnets to attach the function to; empty = outside the VPC (ADR-003)."
+}
+
+variable "security_group_ids" {
+  type    = list(string)
+  default = []
+}
+
+variable "layers" {
+  type    = list(string)
+  default = []
+}

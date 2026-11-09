@@ -1,7 +1,7 @@
 # Stellenradar – developer commands (GNU Make 3.81 compatible)
 TF_DIR := infra/envs/dev
 
-.PHONY: help venv lint test eval-sample eval-label eval-freeze eval-score run-pipeline athena-ddl curate curate-check spike-s4 tf-fmt tf-init tf-plan tf-apply bootstrap-ci github-setup invoke-ingest-smoke
+.PHONY: help venv lint test layers db-up db-down db-bootstrap db-migrate db-status tracker-add tracker-list eval-sample eval-label eval-freeze eval-score run-pipeline athena-ddl curate curate-check spike-s4 tf-fmt tf-init tf-plan tf-apply bootstrap-ci github-setup invoke-ingest-smoke
 
 help:
 	@echo "make venv          Create .venv with Python 3.12 and dev tools"
@@ -17,6 +17,12 @@ help:
 	@echo "make eval-label    Label the sampled postings in your browser (saves after every posting)"
 	@echo "make eval-freeze   Turn the checked labels into eval/labelled_set.jsonl"
 	@echo "make eval-score [CONFIG=model@prompt]  Score models/prompts on the labelled set (calls Bedrock)"
+	@echo "make layers        Build the Lambda layer directories (needed before tf-plan)"
+	@echo "make db-up / db-down   Start (and wait) / stop the RDS instance"
+	@echo "make db-bootstrap  One-time: roles, schemas, pgvector, then migrations (after the first apply)"
+	@echo "make db-migrate / db-status   Apply pending migrations / show migrations and row counts"
+	@echo "make tracker-add COMPANY=... ROLE=... [DATE=YYYY-MM-DD REFNR=... STATUS=...]  Add an application"
+	@echo "make tracker-list  List tracked applications"
 	@echo "make tf-fmt        Format all Terraform code"
 	@echo "make tf-plan       Init and plan the dev environment locally (writes dev.tfplan)"
 	@echo "make tf-apply      Apply the saved dev.tfplan"
@@ -59,6 +65,31 @@ eval-freeze:
 eval-score:
 	.venv/bin/python scripts/eval_extraction.py score $(if $(CONFIG),--config $(CONFIG))
 
+layers:
+	.venv/bin/python scripts/build_layer.py db
+
+db-up:
+	.venv/bin/python scripts/db_admin.py up
+
+db-down:
+	.venv/bin/python scripts/db_admin.py down
+
+db-bootstrap:
+	.venv/bin/python scripts/db_admin.py bootstrap
+
+db-migrate:
+	.venv/bin/python scripts/db_admin.py migrate
+
+db-status:
+	.venv/bin/python scripts/db_admin.py status
+
+tracker-add:
+	.venv/bin/python scripts/db_admin.py tracker-add --company "$(COMPANY)" --role "$(ROLE)" \
+	  $(if $(DATE),--date $(DATE)) $(if $(REFNR),--refnr $(REFNR)) $(if $(STATUS),--status $(STATUS))
+
+tracker-list:
+	.venv/bin/python scripts/db_admin.py tracker-list
+
 athena-ddl:
 	.venv/bin/python scripts/athena_sql.py ddl
 
@@ -77,7 +108,7 @@ tf-fmt:
 tf-init:
 	terraform -chdir=$(TF_DIR) init -backend-config=backend.hcl
 
-tf-plan: tf-init
+tf-plan: tf-init layers
 	terraform -chdir=$(TF_DIR) plan -out=dev.tfplan
 
 tf-apply:

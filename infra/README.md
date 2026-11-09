@@ -11,7 +11,10 @@ All AWS resources for Stellenradar, in `eu-central-1`. Design: [SDD §5](../docs
 | `modules/monitoring/` | – | Monthly budget ($10/$25/$50 actual, $30 forecast) and the account's cost anomaly alerts |
 | `modules/storage/` | – | Buckets `stellenradar-dev-{data,config,athena-results}-<account>`: SSE-S3, public access blocked, TLS only; lifecycle: `staging/` 30 days, Athena results 7 days, old CV versions 90 days |
 | `modules/catalog/` | – | Glue databases `stellenradar_{raw,staging,curated,marts}` and Athena workgroup `stellenradar-dev` (engine v3, 1 GiB scan limit per query) |
-| `modules/lambda_function/` | – | Generic Lambda: arm64 Python 3.12, own role and log group, deterministic zip of selected `src/` packages |
+| `modules/lambda_function/` | – | Generic Lambda: arm64 Python 3.12, own role and log group, deterministic zip of selected `src/` packages; optional VPC attachment and layers |
+| `modules/network/` | – | VPC `10.20.0.0/16`, two private subnets, **no internet route**, S3 gateway endpoint, security groups `rds`, `migrate`, `match`, `dms` (ADR-003) |
+| `modules/database/` | – | RDS PostgreSQL 16 `stellenradar-dev-db` (db.t4g.micro, 20 GB gp3, private, IAM auth, TLS forced, logical replication on, RDS-managed master secret) and a **nightly stop** schedule at 22:00 Europe/Berlin |
+| `../layers/db/` → layer `stellenradar-dev-db` | – | `pg8000` and its pure-Python dependencies, pinned by hash; built into `envs/dev/.build/layers/` by `scripts/build_layer.py` (`make layers`, CI) before plan/apply |
 | `modules/orchestration/` | – | Daily pipeline: Step Functions `stellenradar-dev-daily` (ingest → curate), EventBridge Scheduler 06:00 Europe/Berlin, SNS alert topic (email), timeout/abort rule, 26-hour no-success alarm |
 | `modules/github_oidc/` | – | GitHub Actions roles: `gha-terraform-plan` (pull requests, read-only) and `gha-terraform-apply` (protected `dev` environment only) |
 
@@ -40,8 +43,24 @@ No AWS keys exist anywhere – both jobs use GitHub OIDC. The role trust policie
 ```bash
 aws sso login
 make tf-fmt      # format
-make tf-plan     # init + plan, writes infra/envs/dev/dev.tfplan
+make tf-plan     # builds layers, init + plan, writes infra/envs/dev/dev.tfplan
 make tf-apply    # apply the saved plan
 ```
+
+## Database operations
+
+There is no network path from outside into the VPC. Everything goes through the `stellenradar-dev-db-migrate` Lambda (inside the VPC), invoked from your machine:
+
+```bash
+make db-up                     # start the instance and wait (5–10 min); it is stopped every night at 22:00
+make db-bootstrap              # once after the first apply: pgvector, roles migrator/match_app (IAM auth), schemas, then migrations
+make db-migrate                # apply new files in src/db_migrate/migrations/ (each once, in its own transaction)
+make db-status                 # applied/pending migrations, pgvector version, row counts
+make tracker-add COMPANY="ACME" ROLE="Data Engineer" [DATE=2026-11-09 REFNR=... STATUS=applied]
+make tracker-list
+make db-down                   # stop the instance when you are done
+```
+
+Bootstrap reads the RDS-managed master password from Secrets Manager on your machine and passes it once in the invocation payload; the function never logs its event (SDD §4.6). Application roles have no passwords – they log in with IAM tokens over verified TLS (ADR-007).
 
 Prefer CI for applies; local applies are for bootstrap and emergencies.
