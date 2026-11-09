@@ -160,7 +160,8 @@ module "curate" {
 # ---------- Enrich Lambda: field extraction with Bedrock (SDD §4.3, ADR-005) ----------
 
 locals {
-  extract_model = "amazon.nova-lite-v1:0"
+  # Chosen by the extraction evaluation (docs/evaluation.md, ADR-005); prompt v3 belongs to this model choice.
+  extract_model = "amazon.nova-pro-v1:0"
 }
 
 data "aws_iam_policy_document" "enrich" {
@@ -240,7 +241,7 @@ module "enrich" {
     DATA_BUCKET        = module.storage.bucket_names["data"]
     ATHENA_WORKGROUP   = module.catalog.athena_workgroup
     EXTRACT_MODEL_ID   = "eu.${local.extract_model}"
-    PROMPT_VERSION     = "v1"
+    PROMPT_VERSION     = "v3"
     MAX_ENRICH_PER_RUN = "200"
   }
 }

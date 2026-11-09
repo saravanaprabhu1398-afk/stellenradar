@@ -80,10 +80,33 @@ def test_salary_amounts_cover_yearly_monthly_and_k():
     assert 142500 not in amounts
 
 
-def test_ungrounded_salaries():
-    text = "Gehalt: 60.000 - 74.000 € brutto. Deals von €3M–5M."
-    ok = {"salary_min_eur": 60000, "salary_max_eur": 74000}
-    assert v.ungrounded_salaries(ok, text) == []
-    invented = v.ungrounded_salaries({"salary_min_eur": 100000, "salary_max_eur": None}, text)
-    assert len(invented) == 1
-    assert invented[0].startswith("salary_min_eur=100000")
+def test_unsupported_salaries_need_an_exact_amount():
+    text = "Gehalt: 60.000 - 74.000 € brutto. Deals von €3M–5M. Tel. 0228/4108-3651"
+    assert v.unsupported({"salary_min_eur": 60000, "salary_max_eur": 74000}, text) == {}
+    invented = v.unsupported({"salary_min_eur": 100000, "salary_max_eur": None}, text)
+    assert list(invented) == ["salary_min_eur"]
+    # 3651 x 12 = 43812: a tolerance would have let an estimated 44100 pass
+    assert list(v.unsupported({"salary_min_eur": 44100, "salary_max_eur": None}, text)) == ["salary_min_eur"]
+
+
+def test_english_only_needs_an_explicit_statement():
+    fields = {"english_only": True}
+    assert "english_only" in v.unsupported(fields, "We are an international team. Python, AWS.")
+    statements = (
+        "German is not required.",
+        "Deutschkenntnisse sind nicht erforderlich",
+        "Our working language is English",
+        "English is sufficient",
+        "keine Deutschkenntnisse nötig",
+    )
+    for text in statements:
+        assert v.unsupported(fields, text) == {}, text
+    assert v.unsupported({"english_only": False}, "anything") == {}
+
+
+def test_open_ended_salary_clears_the_copied_maximum():
+    both = {"salary_min_eur": 59000, "salary_max_eur": 59000}
+    assert v.open_ended(both, "Jahresbruttogehalt mind. 59.000 Euro mit Überzahlung")["salary_max_eur"] is None
+    assert v.open_ended(both, "Gehalt ab 59.000 €")["salary_max_eur"] is None
+    assert v.open_ended(both, "Festgehalt 59.000 € p.a.")["salary_max_eur"] == 59000
+    assert v.open_ended({"salary_min_eur": 50000, "salary_max_eur": 60000}, "ab 50.000")["salary_max_eur"] == 60000

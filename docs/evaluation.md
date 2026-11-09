@@ -98,3 +98,35 @@ postings to sample from, most of them enriched).
   - more generic non-skills.
 - **Salary guard** in the extractor for every model: an ungrounded salary is sent back once, then set to null. The posting is not lost.
 - **Taxonomy:** variants seen in this run ("transformer", "nix/nixos", "tls/ssl", …).
+
+### 2026-11-09 – set v1, second run (prompt v3, salary guard)
+
+| Config | Overall | Dev | Holdout | Skills F1 | Salary halluc. | Invalid | Tokens in/out | $ / 1k | Gate |
+|---|---|---|---|---|---|---|---|---|---|
+| `eu.amazon.nova-pro-v1:0@v3` | **86.7%** | 84.8% | **91.1%** | 0.68 | 2.1% | 0 | 3066 / 112 | 2.81 | FAIL (overall, skills, halluc.) |
+| `eu.amazon.nova-pro-v1:0@v2` | 85.8% | 84.4% | 88.9% | 0.67 | 0% | 0 | 2908 / 123 | 2.72 | FAIL (overall, skills) |
+| `eu.amazon.nova-2-lite-v1:0@v3` | 81.3% | 81.6% | 80.7% | 0.71 | 0% | 0 | 3153 / 166 | 1.36 | FAIL (+ seniority 58%, remote 56%) |
+
+Per field for Nova Pro v3:
+- skills 34%;
+- cloud 96%, seniority 96%;
+- salary min 98%, max 98%;
+- German 90%, english_only 78%;
+- visa 100%, remote 90%.
+
+**Remaining Nova Pro v3 misses (dev):**
+- **The one invented salary** (BaFin, 44,100 estimated from "E12 TVöD") passed the 1% tolerance of the guard: the phone extension "-3651" × 12 = 43,812 was within it. The guard now requires an exact match.
+- **"mind. 59.000 €"** still came back as min = max. It is now cleared deterministically when "ab / mind. / mindestens / at least / from" precedes the amount.
+- **`english_only=true` for 11 English ads without a statement**, despite the explicit v3 rule. It now requires evidence in the text ("German not required", "keine Deutschkenntnisse", "English is sufficient", "Arbeitssprache Englisch" …), with one retry and then false. None of the 50 ads contains such a statement, so the positive case is still untested (coverage gap noted above).
+
+**Replayed with the new guards** (stored model outputs, no new Bedrock calls; a live run would add the retry):
+
+| Config | Overall | Dev | Holdout | Without skills | Salary halluc. |
+|---|---|---|---|---|---|
+| Nova Pro v3 + guards | **89.6%** | 88.3% | **92.6%** | **96.5%** | 0% |
+| Nova Pro v2 + guards | 88.7% | 87.9% | 90.4% | 95.8% | 0% |
+
+**Decision (provisional, ADR-005):** production switches to Nova Pro + v3 with the guards.
+- The only gate criterion still failing is skills (per-posting F1 ≥ 0.8; overall F1 0.68).
+- It will be recalibrated from the owner's 10-posting check: human-vs-labeller skill agreement is the realistic ceiling.
+- `PROMPT_VERSION` v3 puts all current postings back on the work list. At 200 per run they are re-enriched over about 5 daily runs, costing about $2.50 in total.

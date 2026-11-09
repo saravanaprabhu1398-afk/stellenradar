@@ -2,7 +2,7 @@
 
 | Status | Date | Deciders | Related |
 |---|---|---|---|
-| Accepted (model family) – final extraction model chosen in Week 2 | 2026-10-19, revised 2026-10-21 | Prabhu Saravanan | PRD FR-06–08, FR-14, NFR-04, NFR-11 · HLD §6.3 · [Cost model §4.2](../06-cost-model.md) |
+| Accepted (model family) · **Provisional: Nova Pro + prompt v3 for extraction** (2026-11-09), final after the human label check | 2026-10-19, revised 2026-10-21 | Prabhu Saravanan | PRD FR-06–08, FR-14, NFR-04, NFR-11 · HLD §6.3 · [Cost model §4.2](../06-cost-model.md) |
 
 ## Context
 
@@ -78,4 +78,23 @@ EU inference profiles also listed in the account: `eu.amazon.nova-micro-v1:0`, `
 
 - ✅ Spike S2: Titan V2 and Nova Lite confirmed (above).
 - Week 2: SM-03 ≥ 90% on the labelled set with the chosen Nova model; record model ID, accuracy and cost per 1,000 postings in `docs/evaluation.md` and here.
+
+## Week 2 evaluation result (2026-11-09, provisional)
+
+| Config | Overall | Holdout | Without skills | Invented salaries | $ / 1k postings |
+|---|---|---|---|---|---|
+| Nova Lite + v1 (previous production) | 69% | 81% | – | 21% | 0.17 |
+| Nova 2 Lite + v3 | 81% | 81% | – | 0% | 1.36 |
+| **Nova Pro + v3** | 87% (89.6% with the evidence guards, replayed) | 91% (92.6%) | 96.5% | 0% with guards | 2.81 |
+
+**Decision: production extraction uses `eu.amazon.nova-pro-v1:0` with prompt v3** and the evidence guards in code (an invented salary or an unstated `english_only` is sent back once, then set to null/false).
+
+**This deviates from the decision rule above**, which says to pick the cheapest model that passes the gate and to revisit Claude if none passes:
+- No model passes yet, and the only remaining blocker is the skills criterion (per-posting F1 ≥ 0.8). Every model fails it, because skill lists are subjective; its threshold is being recalibrated against human/labeller agreement.
+- Nova 2 Lite ignores two prompt rules regardless of wording: it defaults to `onsite` and `mid`.
+- Nova Pro is better than the previous production setup on every field.
+- Claude Haiku stays blocked by the Marketplace payment issue.
+- At about 10–50 changed postings per day, Nova Pro costs around $1–4 per month, and $8–9 even at 100/day (cost model §4.2).
+
+**Revisit when:** the human label check moves the scores; the recalibrated skills criterion still fails; Claude becomes available; or a cheaper Nova model passes on a re-run.
 - Revisit if no Nova model reaches the gate, if costs exceed the cost model, or if Claude access is set up and a comparison becomes worthwhile.

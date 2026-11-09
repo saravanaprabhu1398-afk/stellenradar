@@ -12,7 +12,7 @@ FIELDS = {
     "remote_policy": "remote",
 }
 POSTING = {"refnr": "R1", "content_hash": "h1", "title": "Data Engineer", "employer": "ACME", "location": None,
-           "description": "Build {pipelines} with Python on AWS."}  # fmt: skip
+           "description": "Build {pipelines} with Python on AWS. German is not required."}  # fmt: skip
 
 
 def tool_response(fields):
@@ -105,7 +105,7 @@ def test_salary_invented_twice_is_nulled_not_dead_lettered():
 
 def test_stated_salary_is_kept():
     posting = {**POSTING, "description": "Python, AWS. Gehalt 65.000 - 80.000 € p.a."}
-    stated = {**FIELDS, "salary_min_eur": 65000, "salary_max_eur": 80000}
+    stated = {**FIELDS, "english_only": False, "salary_min_eur": 65000, "salary_max_eur": 80000}
     x = Extractor(FakeBedrock([tool_response(stated)]), "model").extract(posting)
     assert x.attempts == 1
     assert (x.fields["salary_min_eur"], x.fields["salary_max_eur"]) == (65000, 80000)
@@ -113,3 +113,26 @@ def test_stated_salary_is_kept():
 
 def test_prompt_v3_loads():
     assert "english_only is true ONLY" in Extractor(FakeBedrock([]), "model", "v3").system
+
+
+def test_english_only_without_statement_falls_back_to_false():
+    claimed = {**FIELDS, "english_only": True}
+    client = FakeBedrock([tool_response(claimed), tool_response(claimed)])
+    x = Extractor(client, "model").extract({**POSTING, "description": "International team, Python on AWS."})
+    assert x.ok
+    assert x.fields["english_only"] is False
+    assert "never says that German is not required" in x.problems[0]
+
+
+def test_english_only_with_statement_is_kept():
+    posting = {**POSTING, "description": "Python and AWS. German is not required."}
+    x = Extractor(FakeBedrock([tool_response({**FIELDS, "english_only": True})]), "model").extract(posting)
+    assert x.attempts == 1
+    assert x.fields["english_only"] is True
+
+
+def test_open_ended_minimum_is_applied():
+    posting = {**POSTING, "description": "Python. Gehalt mind. 59.000 Euro."}
+    both = {**FIELDS, "english_only": False, "salary_min_eur": 59000, "salary_max_eur": 59000}
+    x = Extractor(FakeBedrock([tool_response(both)]), "model").extract(posting)
+    assert (x.fields["salary_min_eur"], x.fields["salary_max_eur"]) == (59000, None)

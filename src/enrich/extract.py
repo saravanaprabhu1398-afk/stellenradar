@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from enrich.validate import errors, normalise, ungrounded_salaries
+from enrich.validate import UNSUPPORTED_FALLBACK, errors, normalise, open_ended, unsupported
 
 HERE = Path(__file__).parent
 TOOL_NAME = "record_posting_fields"
@@ -70,8 +70,9 @@ class Extractor:
     def extract(self, posting: dict) -> Extraction:
         """One call, plus one retry that shows the model its validation errors.
 
-        A salary that appears nowhere in the ad is sent back like a validation error; if the retry still invents one,
-        the salary is set to null rather than losing the posting's other fields.
+        A value the ad cannot support (an invented salary, english_only without a statement) is sent back like a
+        validation error; if the retry still returns it, that field falls back to null/false rather than losing the
+        posting's other fields.
         """
         text = f"{posting.get('title') or ''}\n{posting.get('description') or ''}"
         result = Extraction(refnr=posting["refnr"], content_hash=posting["content_hash"])
@@ -95,15 +96,13 @@ class Extractor:
 
             result.last_input = tool_use["input"]
             result.problems = errors(tool_use["input"])
-            ungrounded = [] if result.problems else ungrounded_salaries(tool_use["input"], text)
-            if not result.problems and (not ungrounded or result.attempts == 2):
-                fields = dict(tool_use["input"])
-                for problem in ungrounded:
-                    fields[problem.split("=", 1)[0]] = None
-                result.fields = normalise(fields)
-                result.problems = ungrounded  # kept for diagnosis; the posting is still valid
+            weak = {} if result.problems else unsupported(tool_use["input"], text)
+            if not result.problems and (not weak or result.attempts == 2):
+                fields = {**tool_use["input"], **{name: UNSUPPORTED_FALLBACK[name] for name in weak}}
+                result.fields = normalise(open_ended(fields, text))
+                result.problems = list(weak.values())  # kept for diagnosis; the posting is still valid
                 return result
-            result.problems = result.problems or ungrounded
+            result.problems = result.problems or list(weak.values())
             messages += [
                 {"role": "assistant", "content": content},
                 {

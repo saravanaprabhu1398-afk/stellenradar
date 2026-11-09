@@ -63,7 +63,6 @@ def errors(fields: Any) -> list[str]:
 _AMOUNT = re.compile(
     r"(?<![\d.,])(\d{1,3}(?:[.,\s]\d{3})+|\d+(?:[.,]\d{1,2})?)\s*(k\b|tsd\b|tausend\b)?", re.IGNORECASE
 )
-SALARY_TOLERANCE = 0.01
 
 
 def salary_amounts(text: str) -> set[int]:
@@ -81,18 +80,59 @@ def salary_amounts(text: str) -> set[int]:
     return amounts
 
 
-def ungrounded_salaries(fields: dict, text: str) -> list[str]:
-    """Salary values that do not come from any amount in the ad – the model invented or mis-derived them."""
+# An explicit statement that German is not needed – the only evidence english_only=true may rest on.
+ENGLISH_ONLY_EVIDENCE = re.compile(
+    r"german\s+(?:language\s+)?(?:skills\s+)?(?:is\s+|are\s+)?not\s+(?:required|necessary|needed|a\s+must|mandatory)"
+    r"|no\s+german\s+(?:required|needed|necessary|skills|knowledge)|without\s+(?:any\s+)?german"
+    r"|english[- ]only|english\s+is\s+(?:sufficient|enough)|(?:working|company|team)\s+language\s+is\s+english"
+    r"|(?:keine|ohne)\s+deutschkenntnisse|deutsch(?:kenntnisse)?\s+(?:sind\s+|ist\s+)?nicht\s+"
+    r"(?:erforderlich|notwendig|zwingend|vorausgesetzt)|englisch\s+(?:ist\s+)?ausreichend"
+    r"|(?:arbeits|unternehmens|team)sprache\s+(?:ist\s+)?englisch",
+    re.IGNORECASE,
+)
+# Value a field falls back to when the ad does not support what the model returned.
+UNSUPPORTED_FALLBACK = {"salary_min_eur": None, "salary_max_eur": None, "english_only": False}
+
+
+def unsupported(fields: dict, text: str) -> dict[str, str]:
+    """Fields whose value the ad text cannot support, with the reason sent back to the model.
+
+    Salaries must equal an amount in the ad (as stated, × 12 or "65k" – exactly: a tolerance once let a phone
+    extension × 12 pass); english_only=true needs an explicit statement that German is not required.
+    """
     amounts = salary_amounts(text)
-    problems = []
+    problems = {}
     for name in ("salary_min_eur", "salary_max_eur"):
         value = fields.get(name)
-        if _is_int(value) and not any(abs(value - a) <= SALARY_TOLERANCE * value for a in amounts):
-            problems.append(
+        if _is_int(value) and value not in amounts:
+            problems[name] = (
                 f"{name}={value} does not appear in the advertisement as a yearly amount or a monthly amount × 12; "
                 "use null unless the ad states a salary for this job"
             )
+    if fields.get("english_only") is True and not ENGLISH_ONLY_EVIDENCE.search(text):
+        problems["english_only"] = (
+            "english_only=true, but the advertisement never says that German is not required or that English is "
+            "sufficient; an ad written in English is not enough – use false"
+        )
     return problems
+
+
+_OPEN_ENDED = re.compile(
+    r"(?:\bab|\bmind\.?|\bmindestens|\bat\s+least|\bfrom|\bstarting\s+at)\s*(?:€|eur\b|euro\b)?\s*$", re.I
+)
+
+
+def open_ended(fields: dict, text: str) -> dict:
+    """ "ab/mind. 59.000 €" is a minimum only: clear salary_max_eur when the model copied the minimum into it."""
+    low, high = fields.get("salary_min_eur"), fields.get("salary_max_eur")
+    if not _is_int(low) or low != high:
+        return fields
+    for match in _AMOUNT.finditer(text):
+        if low in salary_amounts(match.group(0)) and _OPEN_ENDED.search(
+            text[max(0, match.start() - 25) : match.start()]
+        ):
+            return {**fields, "salary_max_eur": None}
+    return fields
 
 
 def normalise_skill(skill: str) -> str | None:
